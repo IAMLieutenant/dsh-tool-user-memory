@@ -14,7 +14,12 @@ const { values } = parseArgs({
 const files =
   values.files.length > 0
     ? values.files
-    : ['tests/profile.test.ts', 'tests/store.test.ts', 'tests/harness.test.ts'];
+    : [
+        'tests/profile.test.ts',
+        'tests/store.test.ts',
+        'tests/harness.test.ts',
+        'tests/loop.test.ts',
+      ];
 
 const stream = run({ files, isolation: 'none' });
 let failures = 0;

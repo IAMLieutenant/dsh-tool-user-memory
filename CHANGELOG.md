@@ -4,11 +4,15 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.1] — 2026-08-14
+
+### Fixed
+
+- **"复读档案"僵硬问题**：系统提示词注入新增使用指南——agent 应把画像**内化为对用户的理解**（用于自然个性化语气/语言/框架），**除非用户主动询问，不得复读/引用/总结画像**。之前画像只被标注为"参考数据"，导致新会话的 agent 倾向于把档案原样背诵成表格。
 
 ### Changed
 
-- README (中文 + English) fully rewritten as a user journey: project intro →
+- README (中文 + English) rewritten as a complete user journey: project intro →
   install → verify → usage (remember / read / forget / cross-session demo) →
   where the memory lives → tool reference → development → roadmap.
 

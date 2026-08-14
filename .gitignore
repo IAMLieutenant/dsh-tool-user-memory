@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+
+# build output (published via prepublishOnly build)
+lib/
+
+# local npm cache used in sandboxed environments
+.npm-cache/
+
+# logs / scratch
+*.log
+test-output.log
+
+# npm pack artifacts
+*.tgz
+
+# OS
+.DS_Store
+Thumbs.db

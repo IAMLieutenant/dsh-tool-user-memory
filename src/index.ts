@@ -1,5 +1,5 @@
-﻿/**
- * dsh-tool-user-memory 鈥?user preference memory for DeepSeek Harness.
+/**
+ * dsh-tool-user-memory — user preference memory for DeepSeek Harness.
  *
  * A Cordis plugin that gives the agent a persisted, cross-session memory of
  * user preferences:

@@ -18,10 +18,20 @@
     "README.zh.md"
   ],
   "license": "MIT",
+  "author": "IAMLieutenant",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IAMLieutenant/dsh-tool-user-memory.git"
+  },
+  "homepage": "https://github.com/IAMLieutenant/dsh-tool-user-memory#readme",
+  "bugs": {
+    "url": "https://github.com/IAMLieutenant/dsh-tool-user-memory/issues"
+  },
   "keywords": [
     "deepseek",
     "harness",
     "dsh",
+    "dsh-plugin",
     "plugin",
     "memory",
     "user-profile",

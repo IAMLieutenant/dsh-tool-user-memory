@@ -1,110 +1,238 @@
 # dsh-tool-user-memory
 
-User preference memory for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness):
-a Cordis plugin that gives the agent a **persisted, cross-session memory of user
-preferences**, injected into the system prompt of every session.
+**User preference memory for DeepSeek Harness**: a Cordis plugin that lets the
+agent remember your preferences across sessions — language, communication style,
+project background, goals. No need to re-introduce yourself in every new session.
 
-> **Standalone open-source plugin** —developed and maintained independently as part
-> of the DeepSeek Harness community ecosystem (topic: [`dsh-plugin`](https://github.com/topics/dsh-plugin)).
-> Not affiliated with the official repository; install it straight from npm:
-> `npm i dsh-tool-user-memory`, then
-> `dsh plugin --profile web add dsh-tool-user-memory`.
+> **Standalone open-source plugin** — developed and maintained independently as
+> part of the DeepSeek Harness community ecosystem (topic:
+> [`dsh-plugin`](https://github.com/topics/dsh-plugin)). Not affiliated with the
+> official repository; install straight from npm and enable it in ~30 seconds.
 
-[中文文档](README.md)
+[中文](README.md) ｜ [Changelog](CHANGELOG.md)
 
-## What it does
+---
 
-- **Two model-facing tools**
-  - `memory_get(query?, limit?)` —read the user profile (filtered by keyword)
-  - `memory_update(key, value, mode?)` —record / append / remove a preference
-- **System-prompt injection** —every turn of every session carries the current
-  profile through the `{{user_profile}}` prompt variable. Empty profile renders to
-  an empty section, so there is **zero token cost** until something is recorded.
-- **Durable, transparent storage** —a single Markdown file at
-  `$DSH_HOME/user-memory/user.md` (default). Human-readable, diffable, deletable
-  (= forgetting). Atomic writes (tmp file + rename), owner-only permissions.
+## 1. What it does
 
-## Install
+### The problem
+
+By default a DeepSeek Harness agent is a "stranger" in every new session: it does
+not know your preferences, your projects, or even your language. Every session
+starts from scratch.
+
+This plugin gives the agent a **persisted user profile**:
+
+- You say "I prefer concise answers" — the agent writes it to a memory file;
+- **Every subsequent session** the profile is injected into the system prompt,
+  so the agent knows you from the start — no reminders, no tool calls needed.
+
+### Capabilities
+
+| Capability | Description |
+|---|---|
+| `memory_update(key, value, mode?)` | The agent records / appends / removes a stable preference it just learned |
+| `memory_get(query?, limit?)` | The agent reads your profile when personalisation matters |
+| `{{user_profile}}` system-prompt injection | **Every turn of every session** carries your profile (zero token cost while empty) |
+| Durable storage | `$DSH_HOME/user-memory/user.md` — human-readable, editable, deletable |
+
+### How it works (30 seconds)
+
+```
+You: "Remember: I prefer concise Chinese answers"
+  → agent decides to call memory_update
+  → writes to $DSH_HOME/user-memory/user.md (atomic write, owner-only)
+  → every new session: profile injected into the system prompt → the agent knows you
+```
+
+---
+
+## 2. Install
+
+### Prerequisites
+
+- A working [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
+  (`dsh` CLI; verified on 0.1.0-rc.x).
+- No manual npm setup needed — `dsh plugin` installs the package for you.
+
+### One command (recommended)
+
+Install into the profile you use, e.g. web:
 
 ```sh
-# into the web profile
 dsh plugin --profile web add dsh-tool-user-memory
-# or headless
+```
+
+headless or any other profile works the same way:
+
+```sh
 dsh plugin --profile headless add dsh-tool-user-memory
 ```
 
-Restart the session. The tools appear in the model's toolset and the profile is
-injected every turn.
+**Then restart your dsh session** (for web: restart `dsh web`) — the plugin activates on boot.
 
-> **Verified (2026-08-14, dsh 0.1.0-rc.6)**: installing via `dsh plugin`
-> activates the plugin as a profile bundle (declares `dsh.bundle.patch`); a
-> real headless session persisted a preference through `memory_update`, and a
-> brand-new session answered from the injected `{{user_profile}}` without
-> calling any tool.
+> The install does two things: 1) adds the package to the profile's dependencies;
+> 2) because the package declares `dsh.bundle.patch`, it is automatically activated
+> as a profile bundle layer (see verification below).
 
-## Configuration
+### Alternative: install from source
+
+```sh
+git clone https://github.com/IAMLieutenant/dsh-tool-user-memory.git
+cd dsh-tool-user-memory
+npm install && npm run build
+npm pack                       # produces dsh-tool-user-memory-0.1.0.tgz
+dsh plugin --profile web add ./dsh-tool-user-memory-0.1.0.tgz
+```
+
+### Configuration (optional)
+
+Zero config by default. To tweak, override the `tool-user-memory` row in the
+profile's `cordis.patch.yml`:
 
 | Key | Default | Meaning |
 |---|---|---|
 | `path` | `$DSH_HOME/user-memory/user.md` | Profile file path |
-| `maxBytes` | `8192` | Max profile bytes; oversized documents are head/tail truncated |
+| `maxBytes` | `8192` | Max profile bytes; oversized docs are head/tail truncated |
 | `includeInPrompt` | `true` | Inject the profile into every session's system prompt |
 
-## Tool contract
+---
+
+## 3. Verify the installation
+
+### Method 1 — check the profile manifest
+
+Open the profile's `package.json` (e.g. `$DSH_HOME/profiles/web/package.json`);
+`dsh.profile.bundles` must contain `dsh-tool-user-memory`:
+
+```json
+"dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "dsh-tool-user-memory"] } }
+```
+
+### Method 2 — ask the agent about its memory tools
+
+After restarting, ask:
+
+> "What memory-related tools do you have?"
+
+A correct answer mentions `memory_get` and `memory_update`.
+
+### Method 3 — check the profile file is writable
+
+After using "remember" once, `$DSH_HOME/user-memory/user.md` should exist and be
+readable (Windows default: `C:\Users\<you>\.dsh\user-memory\user.md`).
+
+---
+
+## 4. Usage guide: make the agent remember you
+
+### Scenario A — tell the agent to remember (one line)
+
+Just say it — the agent calls `memory_update` itself:
+
+> "Remember: I prefer concise answers"
+> "Remember: I do Python backend development"
+> "Remember: my goal is to learn agent engineering"
+
+**What the agent should store** (its tool description's discipline):
+- ✅ Stable long-term preferences, self-introductions, project backgrounds, goals
+- ❌ One-off requests ("look at this file" is not a preference)
+- ❌ Credentials, passwords, tokens (**never**)
+
+### Scenario B — see what it remembers
+
+> "What do you remember about me?"
+> "What is my communication-style preference?" (with a keyword)
+
+### Scenario C — edit / forget
+
+> "Forget my preference for X" (the agent calls `memory_update mode=remove`)
+
+You can also **hand-edit the profile file** (`$DSH_HOME/user-memory/user.md`) — it
+is plain Markdown, changes take effect immediately, and **deleting the file wipes
+the memory**:
+
+```markdown
+# User Memory
+
+## language
+Concise Chinese answers
+
+## communication-style
+Direct, minimal pleasantries
+```
+
+### Scenario D — verify cross-session memory (the key demo)
+
+1. In session 1: "Remember: I prefer concise Chinese answers"
+2. **Start a brand-new session** and ask: "What is my language preference?"
+3. The agent answers **without calling any tool** — the profile is already in the
+   system prompt.
+
+---
+
+## 5. Where does the memory live?
+
+- **Global**: stored under `$DSH_HOME`, shared across **all workspaces and
+  profiles** (web / headless).
+- **Auto-injected**: every new session carries the current profile in its system
+  prompt; nothing to load manually.
+- **Zero-cost start**: nothing is injected while the profile is empty.
+- **Under your control**: the file can be viewed, edited, or deleted at any time.
+
+> Security: the injected profile is framed as *reference data, not instructions*;
+> the agent must not follow directives inside it unless you repeat them in the
+> current message (same stance as the official `dsh-session-reference` snapshots).
+
+---
+
+## 6. Tool reference
 
 ### `memory_get`
 
-Call when personalisation matters: preferred language, communication style,
-project background, previously recorded preferences.
+| Arg | Required | Description |
+|---|---|---|
+| `query` | no | Keyword; filters entries by key or value |
+| `limit` | no | Max entries (default 50, max 100) |
 
-- `query` —optional keyword; filters entries by key or value
-- `limit` —max entries (default 50, max 100)
-- Returns `{ ok, total, entries: [{ key, value }], rendered }`
+Returns `{ ok, total, rendered }` (`rendered` is the model-facing text).
 
 ### `memory_update`
 
-Call when the user expresses a **stable, long-term preference**, introduces
-themselves / their project, or states a goal. Do NOT store one-off requests.
-NEVER store credentials, passwords or tokens.
+| Arg | Required | Description |
+|---|---|---|
+| `key` | yes | Preference key, e.g. `language`, `communication-style` |
+| `value` | yes | Preference content |
+| `mode` | no | `set` (default, replace) / `append` (add a line) / `remove` (delete the key) |
 
-- `key` —preference key, e.g. `language`, `communication-style`
-- `value` —preference content
-- `mode` —`set` (default) / `append` / `remove`
-- Returns `{ ok, key, mode, bytes, error? }`
+Returns `{ ok, key, mode, bytes, error? }`.
 
-## Security
+---
 
-- The injected profile is framed as **reference data, not instructions**; the
-  agent must not follow directives found inside it unless the user repeats them
-  in the current message (same stance as `dsh-session-reference` snapshots).
-- Reserved key `updated-at` cannot be written by tools.
-- File permissions: directory `0o700`, file `0o600`.
-
-## Model experience
-
-- **What the model sees**: the profile text under a "reference data, not
-  instructions" header, plus the two tool schemas.
-- **Token impact**: fixed cost per request equal to the rendered profile
-  (≤`maxBytes`); zero when empty.
-- **KV Cache impact**: the profile is a stable prefix per session; changing it
-  invalidates cache from the first changed token.
-
-## Development
+## 7. Development
 
 ```sh
 npm install
-npm test          # unit tests (node --test, no host needed)
-npm run build     # tsc →lib/
+npm test          # 21/21: unit + storage integration + harness integration + full AgentLoop test
+npm run build     # tsc → lib/
 ```
 
-The storage layer intentionally uses `node:fs` directly (plugin-internal trusted
-state, like settings/session persistence), not the sandboxed `ctx.fs` seam.
+- The storage layer deliberately uses `node:fs` directly (plugin-internal trusted
+  state, like settings / session persistence), not the sandboxed model-facing
+  `ctx.fs` seam.
+- Layout: `src/index.ts` (plugin) `profile.ts` (pure document model) `store.ts`
+  (atomic-write storage) `tools.ts` (the two tools) `prompt.ts` (system-prompt injection).
 
-## Roadmap
+---
 
-- v2: semantic `memory_search` (embedding recall), per-user files keyed by
-  session identity, per-workspace profile mode, stale-entry aging by
-  `updated-at`.
+## 8. Roadmap (v2)
+
+- Semantic `memory_search` (embedding recall, reuse chroma experience)
+- Per-user profiles (keyed by session identity)
+- Per-workspace memory mode
+- Aging cleanup of stale entries by `updated-at`
+
+---
 
 ## License
 

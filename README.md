@@ -1,10 +1,10 @@
-﻿# dsh-tool-user-memory
+# dsh-tool-user-memory
 
 User preference memory for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness):
 a Cordis plugin that gives the agent a **persisted, cross-session memory of user
 preferences**, injected into the system prompt of every session.
 
-> **Standalone open-source plugin** 鈥?developed and maintained independently as part
+> **Standalone open-source plugin** —developed and maintained independently as part
 > of the DeepSeek Harness community ecosystem (topic: [`dsh-plugin`](https://github.com/topics/dsh-plugin)).
 > Not affiliated with the official repository; install it straight from npm:
 > `npm i dsh-tool-user-memory`, then
@@ -15,12 +15,12 @@ preferences**, injected into the system prompt of every session.
 ## What it does
 
 - **Two model-facing tools**
-  - `memory_get(query?, limit?)` 鈥?read the user profile (filtered by keyword)
-  - `memory_update(key, value, mode?)` 鈥?record / append / remove a preference
-- **System-prompt injection** 鈥?every turn of every session carries the current
+  - `memory_get(query?, limit?)` —read the user profile (filtered by keyword)
+  - `memory_update(key, value, mode?)` —record / append / remove a preference
+- **System-prompt injection** —every turn of every session carries the current
   profile through the `{{user_profile}}` prompt variable. Empty profile renders to
   an empty section, so there is **zero token cost** until something is recorded.
-- **Durable, transparent storage** 鈥?a single Markdown file at
+- **Durable, transparent storage** —a single Markdown file at
   `$DSH_HOME/user-memory/user.md` (default). Human-readable, diffable, deletable
   (= forgetting). Atomic writes (tmp file + rename), owner-only permissions.
 
@@ -35,6 +35,12 @@ dsh plugin --profile headless add dsh-tool-user-memory
 
 Restart the session. The tools appear in the model's toolset and the profile is
 injected every turn.
+
+> **Verified (2026-08-14, dsh 0.1.0-rc.6)**: installing via `dsh plugin`
+> activates the plugin as a profile bundle (declares `dsh.bundle.patch`); a
+> real headless session persisted a preference through `memory_update`, and a
+> brand-new session answered from the injected `{{user_profile}}` without
+> calling any tool.
 
 ## Configuration
 
@@ -51,8 +57,8 @@ injected every turn.
 Call when personalisation matters: preferred language, communication style,
 project background, previously recorded preferences.
 
-- `query` 鈥?optional keyword; filters entries by key or value
-- `limit` 鈥?max entries (default 50, max 100)
+- `query` —optional keyword; filters entries by key or value
+- `limit` —max entries (default 50, max 100)
 - Returns `{ ok, total, entries: [{ key, value }], rendered }`
 
 ### `memory_update`
@@ -61,9 +67,9 @@ Call when the user expresses a **stable, long-term preference**, introduces
 themselves / their project, or states a goal. Do NOT store one-off requests.
 NEVER store credentials, passwords or tokens.
 
-- `key` 鈥?preference key, e.g. `language`, `communication-style`
-- `value` 鈥?preference content
-- `mode` 鈥?`set` (default) / `append` / `remove`
+- `key` —preference key, e.g. `language`, `communication-style`
+- `value` —preference content
+- `mode` —`set` (default) / `append` / `remove`
 - Returns `{ ok, key, mode, bytes, error? }`
 
 ## Security

@@ -1,0 +1,10 @@
+# dsh-tool-user-memory bundle patch: activate the plugin in a profile.
+#
+# A profile loads this package as a bundle layer (dsh.bundle.patch); the loader
+# row below mounts the plugin itself. Override config from the profile's own
+# cordis.patch.yml by targeting the same row id (e.g. set a custom `path` or
+# `includeInPrompt: false`), with the last write winning per row.
+
+- insert:
+    - id: tool-user-memory
+      name: dsh-tool-user-memory

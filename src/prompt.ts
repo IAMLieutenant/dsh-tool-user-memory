@@ -1,10 +1,11 @@
-﻿/**
+/**
  * System-prompt injection: every turn of every session carries the current
- * user profile through a `{{userProfile}}` prompt variable.
+ * user profile through a `{{user_profile}}` prompt variable.
  *
- * The section text is exactly the variable reference, so an empty profile
- * renders to an empty section which the prompt renderer drops 鈥?zero token
- * cost when there is nothing to remember.
+ * Prompt-variable names must match /^[a-z][a-z0-9_]*$/ (validated at runtime),
+ * hence snake_case. The section text is exactly the variable reference, so an
+ * empty profile renders to an empty section which the prompt renderer drops —
+ * zero token cost when there is nothing to remember.
  */
 
 import type { Context } from '@deepseek-ai/cordis';
@@ -17,7 +18,7 @@ export function registerProfilePrompt(
 ): void {
   if (!includeInPrompt) return;
 
-  ctx.systemPrompt.variable('userProfile', () => {
+  ctx.systemPrompt.variable('user_profile', () => {
     const profile = store.readSync().trim();
     if (profile === '') return '';
     return [
@@ -33,6 +34,6 @@ export function registerProfilePrompt(
   ctx.systemPrompt.section({
     name: 'user:memory',
     order: 50,
-    text: '{{userProfile}}',
+    text: '{{user_profile}}',
   });
 }

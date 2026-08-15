@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Model-facing tools: `memory_get` (read the user profile) and
  * `memory_update` (record a stable user preference).
  */
@@ -18,6 +18,12 @@ function fieldOf(value: unknown, key: string): string {
 
 function isOk(value: unknown): boolean {
   return typeof value === 'object' && value !== null && (value as Record<string, unknown>).ok === true;
+}
+
+function evictedOf(value: unknown): string[] {
+  if (typeof value !== 'object' || value === null) return [];
+  const evicted = (value as Record<string, unknown>).evicted;
+  return Array.isArray(evicted) ? evicted.map((item) => String(item)) : [];
 }
 
 export function registerMemoryTools(ctx: Context, store: MemoryStore): void {
@@ -91,14 +97,16 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore): void {
       },
       output: {
         schema: { type: 'object', additionalProperties: true },
-        render: (_args, value) => [
-          {
-            type: 'text',
-            text: isOk(value)
-              ? `memory updated (${fieldOf(value, 'key')})`
-              : `memory update failed: ${fieldOf(value, 'error') || 'unknown error'}`,
-          },
-        ],
+        render: (_args, value) => {
+          if (!isOk(value)) {
+            return [{ type: 'text', text: `memory update failed: ${fieldOf(value, 'error') || 'unknown error'}` }];
+          }
+          const evicted = evictedOf(value);
+          const text =
+            `memory updated (${fieldOf(value, 'key')})` +
+            (evicted.length > 0 ? `; evicted older entries to stay within limit: ${evicted.join(', ')}` : '');
+          return [{ type: 'text', text }];
+        },
       },
       async execute(args: {
         key: string;
@@ -107,8 +115,23 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore): void {
       }): Promise<Record<string, import('@deepseek-ai/dsh-session').JsonValue>> {
         const result = await store.update(args.key, args.value, args.mode ?? 'set');
         return result.ok
-          ? { ok: true, key: result.key, mode: result.mode, bytes: result.bytes }
-          : { ok: false, key: result.key, mode: result.mode, bytes: 0, error: result.error ?? '' };
+          ? {
+              ok: true,
+              key: result.key,
+              mode: result.mode,
+              bytes: result.bytes,
+              evicted: result.evicted,
+              truncated: result.truncated,
+            }
+          : {
+              ok: false,
+              key: result.key,
+              mode: result.mode,
+              bytes: 0,
+              evicted: [],
+              truncated: null,
+              error: result.error ?? '',
+            };
       },
     }),
   );

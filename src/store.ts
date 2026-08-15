@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Profile persistence: a single Markdown file under $DSH_HOME (global, shared
  * across workspaces), written atomically (tmp file + rename) with owner-only
  * permissions.
@@ -13,10 +13,11 @@ import * as nodePath from 'node:path';
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths';
 import {
   RESERVED_KEYS,
+  evictToBudget,
   mergeEntry,
   parseProfile,
   serializeProfile,
-  truncateBytes,
+  validateKey,
   type MergeMode,
   type ProfileEntry,
 } from './profile.ts';
@@ -34,6 +35,10 @@ export interface UpdateResult {
   key: string;
   mode: MergeMode;
   bytes: number;
+  /** Keys dropped to stay within `maxBytes` (oldest first). */
+  evicted: string[];
+  /** Key whose value was truncated because it alone exceeded the budget. */
+  truncated: string | null;
   error?: string;
 }
 
@@ -46,6 +51,8 @@ export interface MemoryStore {
   readSync(): string;
   /** Current entries (reserved keys excluded). */
   list(): Promise<ProfileEntry[]>;
+  /** Sync variant used by the system-prompt variable provider. */
+  listSync(): ProfileEntry[];
   update(key: string, value: string, mode: MergeMode): Promise<UpdateResult>;
 }
 
@@ -91,26 +98,52 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
     await fsp.chmod(filePath, 0o600).catch(() => undefined);
   }
 
-  async function list(): Promise<ProfileEntry[]> {
-    const doc = await read();
+  function parseDoc(doc: string): ProfileEntry[] {
     return parseProfile(doc).filter((entry) => !RESERVED_KEYS.has(entry.key));
+  }
+
+  async function list(): Promise<ProfileEntry[]> {
+    return parseDoc(await read());
+  }
+
+  function listSync(): ProfileEntry[] {
+    return parseDoc(readSync());
   }
 
   async function update(key: string, value: string, mode: MergeMode): Promise<UpdateResult> {
     const trimmedKey = key.trim();
-    if (trimmedKey === '') {
-      return { ok: false, key, mode, bytes: 0, error: 'key must be a non-empty string' };
+    const keyError = validateKey(trimmedKey);
+    if (keyError) {
+      return { ok: false, key, mode, bytes: 0, evicted: [], truncated: null, error: keyError };
     }
     if (RESERVED_KEYS.has(trimmedKey)) {
-      return { ok: false, key, mode, bytes: 0, error: `key '${trimmedKey}' is reserved` };
+      return {
+        ok: false,
+        key,
+        mode,
+        bytes: 0,
+        evicted: [],
+        truncated: null,
+        error: `key '${trimmedKey}' is reserved`,
+      };
     }
+    const now = new Date().toISOString();
     const doc = await read();
-    const next = mergeEntry(parseProfile(doc), trimmedKey, value, mode);
-    const body = serializeProfile(next);
-    const stamp = `\n## updated-at\n${new Date().toISOString()}\n`;
-    await write(truncateBytes(body + stamp, maxBytes));
-    return { ok: true, key: trimmedKey, mode, bytes: Buffer.byteLength(body + stamp, 'utf8') };
+    const merged = mergeEntry(parseDoc(doc), trimmedKey, value, mode, now);
+    const stamp = `\n## updated-at\n${now}\n`;
+    const budget = maxBytes - Buffer.byteLength(stamp, 'utf8');
+    const { kept, evicted, truncated } = evictToBudget(merged, budget);
+    const finalDoc = serializeProfile(kept) + stamp;
+    await write(finalDoc);
+    return {
+      ok: true,
+      key: trimmedKey,
+      mode,
+      bytes: Buffer.byteLength(finalDoc, 'utf8'),
+      evicted,
+      truncated,
+    };
   }
 
-  return { path: () => filePath, read, readSync, list, update };
+  return { path: () => filePath, read, readSync, list, listSync, update };
 }

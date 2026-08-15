@@ -93,7 +93,8 @@ profile's `cordis.patch.yml`:
 | Key | Default | Meaning |
 |---|---|---|
 | `path` | `$DSH_HOME/user-memory/user.md` | Profile file path |
-| `maxBytes` | `8192` | Max profile bytes; oversized docs are head/tail truncated |
+| `maxBytes` | `8192` | Max profile file bytes; oldest entries are evicted first when exceeded |
+| `promptMaxBytes` | `2048` | Per-turn injection byte budget (newest first); `0` injects the full profile |
 | `includeInPrompt` | `true` | Inject the profile into every session's system prompt |
 
 ---

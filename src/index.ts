@@ -21,12 +21,19 @@ export const name = 'tool-user-memory';
 /** Host services this plugin depends on. */
 export const inject = ['tools', 'systemPrompt'];
 
+/** Default per-turn injection budget; 0 injects the full profile. */
+export const DEFAULT_PROMPT_MAX_BYTES = 2048;
+
 export const Config = z.object({
   path: z.string().default('').description('Profile file path; defaults to $DSH_HOME/user-memory/user.md'),
   maxBytes: z
     .number()
     .default(DEFAULT_MAX_BYTES)
-    .description('Max profile bytes; oversized documents are head/tail truncated'),
+    .description('Max profile file bytes; oldest entries are evicted first when exceeded'),
+  promptMaxBytes: z
+    .number()
+    .default(DEFAULT_PROMPT_MAX_BYTES)
+    .description('Per-turn prompt injection byte budget (newest entries first); 0 injects the full profile'),
   includeInPrompt: z
     .boolean()
     .default(true)
@@ -37,11 +44,17 @@ export const Config = z.object({
 export interface UserMemoryConfig {
   path: string;
   maxBytes: number;
+  promptMaxBytes: number;
   includeInPrompt: boolean;
 }
 
 export function apply(ctx: Context, config: UserMemoryConfig): void {
   const store = createMemoryStore({ path: config.path, maxBytes: config.maxBytes });
-  registerProfilePrompt(ctx, store, config.includeInPrompt);
+  registerProfilePrompt(
+    ctx,
+    store,
+    config.includeInPrompt !== false,
+    config.promptMaxBytes ?? DEFAULT_PROMPT_MAX_BYTES,
+  );
   registerMemoryTools(ctx, store);
 }

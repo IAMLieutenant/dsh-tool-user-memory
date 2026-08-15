@@ -1,8 +1,8 @@
-﻿/**
+/**
  * Harness integration tests: mount the plugin into a real DeepSeek Harness
  * Context (via the official dsh-agent-loop-testkit), then verify tool
  * registration, tool execution through the registry, and system-prompt
- * injection 鈥?all without needing an LLM.
+ * injection — all without needing an LLM.
  */
 
 import { test } from 'node:test';
@@ -15,6 +15,8 @@ import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-test
 import { renderPrompt } from '@deepseek-ai/dsh-system-prompt';
 import type { CallId } from '@deepseek-ai/dsh-llm';
 import * as ToolUserMemory from '../src/index.ts';
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function tempProfile(): { dir: string; file: string } {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-um-harness-'));
@@ -31,8 +33,13 @@ async function disposeCtx(ctx: Context): Promise<void> {
   if (fiber?.dispose) await fiber.dispose();
 }
 
-async function mountProfile(ctx: Context, file: string, includeInPrompt = true): Promise<void> {
-  await ctx.plugin(ToolUserMemory, { path: file, maxBytes: 8192, includeInPrompt });
+async function mountProfile(
+  ctx: Context,
+  file: string,
+  includeInPrompt = true,
+  promptMaxBytes = 2048,
+): Promise<void> {
+  await ctx.plugin(ToolUserMemory, { path: file, maxBytes: 8192, promptMaxBytes, includeInPrompt });
 }
 
 async function runUpdate(ctx: Context, n: number, key: string, value: string, mode?: string) {
@@ -146,6 +153,26 @@ test('harness: includeInPrompt=false keeps tools but skips injection', async () 
     const assembly = await ctx.systemPrompt.assemble();
     const rendered = renderPrompt(assembly);
     assert.ok(!rendered.includes('Current user profile'));
+  } finally {
+    await disposeCtx(ctx);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('harness: prompt injection is budget-capped, newest entries first', async () => {
+  const { dir, file } = tempProfile();
+  const ctx = new Context();
+  try {
+    await mountAgentLoopTestDependencies(ctx);
+    await mountProfile(ctx, file, true, 100);
+    await runUpdate(ctx, 6, 'older', 'o'.repeat(200));
+    await sleep(25); // ensure a distinct per-entry timestamp
+    await runUpdate(ctx, 7, 'newer', 'n'.repeat(200));
+    const assembly = await ctx.systemPrompt.assemble();
+    const rendered = renderPrompt(assembly);
+    assert.ok(rendered.includes('## newer'));
+    assert.ok(!rendered.includes('## older'));
+    assert.ok(rendered.includes('memory_get')); // note points at the full profile
   } finally {
     await disposeCtx(ctx);
     rmSync(dir, { recursive: true, force: true });

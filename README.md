@@ -84,7 +84,8 @@ dsh plugin --profile web add ./dsh-tool-user-memory-0.1.0.tgz
 | 配置项 | 默认值 | 含义 |
 |---|---|---|
 | `path` | `$DSH_HOME/user-memory/user.md` | 画像文件路径 |
-| `maxBytes` | `8192` | 画像体积上限；超限保头保尾截断 |
+| `maxBytes` | `8192` | 画像文件体积上限；超限时按最旧优先逐条淘汰 |
+| `promptMaxBytes` | `2048` | 每轮系统提示词注入的字节预算（新近优先）；设为 `0` 注入完整画像 |
 | `includeInPrompt` | `true` | 是否在每个会话的系统提示词中注入画像 |
 
 ---

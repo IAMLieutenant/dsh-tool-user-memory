@@ -81,8 +81,8 @@ dsh plugin --profile headless add dsh-tool-user-memory
 git clone https://github.com/IAMLieutenant/dsh-tool-user-memory.git
 cd dsh-tool-user-memory
 npm install && npm run build
-npm pack                       # produces dsh-tool-user-memory-0.1.0.tgz
-dsh plugin --profile web add ./dsh-tool-user-memory-0.1.0.tgz
+npm pack                       # produces dsh-tool-user-memory-0.1.2.tgz
+dsh plugin --profile web add ./dsh-tool-user-memory-0.1.2.tgz
 ```
 
 ### Configuration (optional)

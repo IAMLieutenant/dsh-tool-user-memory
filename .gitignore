@@ -20,3 +20,6 @@ Thumbs.db
 
 # debug scratch
 x.md
+
+# git bundle transfer artifacts
+*.bundle

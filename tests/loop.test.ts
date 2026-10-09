@@ -1,7 +1,8 @@
 /**
- * Loop-level test: mount the FULL agent loop (dsh-agent-loop) with a scripted
+ * Loop-level tests: mount the FULL agent loop (dsh-agent-loop) with a scripted
  * stub LLM adapter, let a real agent decide to call `memory_update`, and verify
- * the preference is persisted and the loop completes both turns.
+ * the preference is persisted, the loop completes both turns, and the
+ * turn-boundary consolidation trigger runs in the background.
  */
 
 import { test } from 'node:test';
@@ -76,6 +77,48 @@ test('loop: agent calls memory_update through the real agent loop and persists',
     // Both model calls must have happened: tool-call turn + final-answer turn.
     const settled = await waitFor(() => adapter.calls >= streamBefore + 2, 10000);
     assert.ok(settled, 'loop completed the tool-call turn and the final-answer turn');
+  } finally {
+    await disposeCtx(ctx);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('loop: autoConsolidate runs a background pass at the turn boundary', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-um-loop-cons-'));
+  const file = join(dir, 'user.md');
+  const logPath = join(dir, 'consolidation-log.md');
+  const ctx = new Context();
+  let agent: Agent | undefined;
+  try {
+    await mountAgentLoopTestDependencies(ctx);
+    const adapter = new StubAdapter();
+    ctx.llm.registerAdapter(['stub'], adapter);
+    ctx.on('agent/created', (entry) => {
+      if ((entry as { agent?: Agent }).agent?.id?.startsWith('loop-agent-cons-')) {
+        agent = (entry as { agent: Agent }).agent;
+      }
+    });
+    await ctx.plugin(ToolUserMemory, {
+      path: file,
+      maxBytes: 8192,
+      includeInPrompt: true,
+      autoConsolidate: true,
+      consolidateMinIntervalMs: 0,
+      consolidationLogPath: logPath,
+      workspaceBase: join(dir, 'ws'),
+    });
+    await ctx.plugin(AgentLoop, {
+      agents: [{ id: 'loop-agent-cons', provider: 'stub', model: 'stub-model' }],
+    });
+
+    assert.ok(await waitFor(() => agent != null), 'config agent created');
+    agent!.followup({ content: '请记住我的语言偏好：中文' } as never);
+
+    const logged = await waitFor(() => existsSync(logPath), 15000);
+    assert.ok(logged, 'the turn boundary triggered a background consolidation run');
+    const log = readFileSync(logPath, 'utf8');
+    assert.ok(log.startsWith('# Consolidation Log'));
+    assert.ok(log.includes('— turn'), 'the run is attributed to the turn boundary');
   } finally {
     await disposeCtx(ctx);
     rmSync(dir, { recursive: true, force: true });

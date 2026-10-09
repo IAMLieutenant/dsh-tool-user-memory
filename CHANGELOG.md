@@ -27,6 +27,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - **`memory_search(query?, limit?, includeStale?)`**：跨「全局画像 + 当前工作区记忆」的关键词检索——主题名命中 ×3、正文出现次数 ×1（上限 5）、全部检索词命中额外 +4，返回带一行摘要的有序结果；子串匹配使中文无需分词即可命中。向量召回刻意不引入（个人规模下文件检索足够，见 Roadmap）。
   - **`memory_topic(topic)`**：读取单个工作区主题的全文（含失效标记）。
   - 主题名做文件名安全校验（拒绝路径分隔符与 Windows 保留字符、禁止 `.` 开头、≤64 字符）；单主题正文上限 16 KiB，超限报错而非静默截断。
+- **后台巩固 / "dreaming"（Phase 3）**：
+  - **触发**：`autoConsolidate`（默认关闭）开启后，在每个 agent 回合边界（`agent/turn-stopping`）异步触发一次整理，`consolidateMinIntervalMs` 去抖（默认 10 分钟），且**不阻塞回合**（fire-and-forget，后台异常绝不外泄进会话）；也可随时手动调用 `memory_consolidate`。
+  - **确定性整理（不需要模型）**：① 重复合并——值归一化（忽略大小写与空白）后保留最新一条，其余软失效并附原因；② 相对时间锚定——含「今天/明天/上周/today/tomorrow/next week」等相对时间的条目**追加**一行绝对记录日期（只加一次，绝不改写用户原话）；③ 老化——超过 `staleAfterDays` 的条目写进运行记录，超过 `autoInvalidateAfterDays`（默认 0 = 关闭）的条目自动软失效。
+  - **模型辅助整理（可选）**：配置 `consolidateProvider` + `consolidateModel` 后，用一次独立模型调用（不写入会话记录，属 sleep-time compute 语义）产出 ops（`add` / `merge` / `rewrite` / `invalidate` / `topic-add` / `topic-invalidate`），逐个校验后与确定性 ops 按操作标签去重合并执行；模型未配置、调用失败或返回非法 JSON 时降级为确定性结果，并在工具输出与日志里说明原因。插件**不硬依赖** `llm` 服务（用 `ctx.get('llm')` 可选获取），未挂载时该层自动关闭、其余功能不受影响。
+  - **审计日志**：每次运行追加到 `$DSH_HOME/user-memory/consolidation-log.md`（可用 `consolidationLogPath` 覆盖）——时间、触发源（`manual` / `turn`）、工作区路径、逐条 `applied` / `skipped` 及原因、老化候选。日志写入失败不会回滚记忆写入。
+  - **`memory_consolidate(mode?, useModel?)`**：`mode=plan`（默认）只报告将要执行的 ops（不落盘、不写日志），`mode=apply` 才执行并写日志。
 
 ### Removed
 
@@ -34,11 +40,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Verified
 
-- 52/52 测试通过 @ **0.1.7-alpha.1** 依赖线（与 2026-09-22 后的官方桌面/网页运行时一致）。
-- 0.2.0-rc.2 依赖线的复核在 Phase 1–3 功能全部落地后统一执行。
-- 新增 25 个测试（11 → Phase 1，14 → Phase 2）：
+- 68/68 测试通过 @ **0.1.7-alpha.1** 依赖线（与 2026-09-22 后的官方桌面/网页运行时一致）。
+- 68/68 测试通过 @ **0.2.0-rc.2** 依赖线（cordis 4.0.4 / schemastery 3.18.4 / cosmokit 1.8.5 / 全部 dsh-* 0.2.0-rc.2），`tsc` 构建同样零报错——确认代码同时兼容 0.1.7-alpha.x 与 0.2.0-rc.x 两条运行时线。
+- 新增 41 个测试（11 → Phase 1，14 → Phase 2，16 → Phase 3）：
   - Phase 1：失效/复活 round-trip（含 reason 内 `|` 字符）、reason 单行化与长度上限、失效未知 key 报错、stale 判定阈值/开关/无时间戳、失效与 stale 标注渲染、失效条目优先淘汰，以及 Context 级验证（失效条目离开提示词、`includeStale` 审计、复活回归、`staleAfterDays` 提示词标注）。
   - Phase 2：主题文件 round-trip（含转义行与失效标记）、主题名校验、索引重建（失效主题不入索引、新近优先）、检索评分与排序（含中文子串、`includeStale` 标记）、工作区存储 set/append/invalidate/remove、超限拒绝、同一 `cwd` 身份稳定、同步索引读取，以及 Context 级验证（`scope=workspace` 经真实工具注册表落盘、无 agent 时的清晰报错、`memory_search` 跨层检索与 `memory_topic` 全文、索引只对携带 agent 的装配注入且按工作区隔离、`workspacePromptMaxBytes=0` 关闭注入）。
+  - Phase 3：值归一化、重复合并（最新保留）、相对时间锚定（只锚一次、不改写原话）、老化候选与自动失效、工作区主题重复合并、模型答案解析（代码围栏/截断 JSON/非法 op 丢弃/`merge` 自指丢弃）、请求构造契约、模型流式取回与调用失败降级、`applyPlan` 落盘与幂等、工作区 op 与无工作区时的跳过、`skipped` 原因、日志追加（表头 + 多次运行共存）、计划/执行/模型错误三种摘要，以及 Context 级验证（`memory_consolidate` 的 plan 不落盘不写日志 / apply 落盘并写日志、`useModel` 经真实 `ctx.llm` 与 stub adapter 写入模型提出的条目、未配置模型时的清晰降级），外加循环级验证（真实 AgentLoop 回合边界异步触发一次后台整理并落日志）。
+
+### 三轴验收对比（OpenAI 记忆评估三轴）
+
+对照 OpenAI 的记忆评估三轴——**事实回忆 / 偏好遵循 / 随时间保持正确**——0.1.x 与 0.2.0 的能力差异，以及每一轴对应的可验证证据：
+
+| 评估轴 | 0.1.x（改造前） | 0.2.0（改造后） | 证据 |
+|---|---|---|---|
+| **事实回忆**（记得住、找得回） | 只有全量画像注入 + `memory_get`；条目一多，每轮注入被预算裁掉，旧事实要靠模型主动调工具才看得到 | 分层 + 检索：全局画像、工作区记忆索引注入、`memory_search`（关键词评分：主题名 ×3、正文次数 ×1 上限 5、全词命中 +4）、`memory_topic` 懒加载全文；子串匹配使中文无需分词 | 检索评分/排序/中文命中用例；harness 跨层检索（global + workspace）与全文读取用例 |
+| **偏好遵循**（按你的偏好行事） | 画像注入 + "参考数据不是指令"护栏（0.1.1）；被取代的偏好只能**硬删除**，模型看不到"曾经如此" | 软失效：`mode=invalidate` + `reason`，失效条目**离开提示词**但留在文件里可审计；`set`/`append` 复活；重复偏好自动合并 | 失效/复活 round-trip、失效离开提示词、`includeStale` 审计、重复合并用例 |
+| **随时间保持正确** | 无时间语义：条目只有写入时间戳（0.1.2 起仅用于淘汰顺序），提示词里完全看不出新旧 | 逐条 `updatedAt` 参与渲染 + `[stale: last updated Nd ago]` 标注（`staleAfterDays`）；后台整理做相对时间锚定与自动老化失效；每次运行都有审计日志 | `isStale` 阈值/开关/无时间戳用例、stale 标注渲染用例、时间锚定与 auto-aging 用例、回合边界后台运行用例 |
+
+结论：三轴各自被一组明确机制补齐（分层检索 → 事实回忆；软失效/复活 → 偏好遵循；老化标注 + 后台时间锚定 → 时间正确性），每项都有对应测试与可审计日志，**不依赖"模型自觉"**。
 
 ## [0.1.2] — 2026-08-15
 

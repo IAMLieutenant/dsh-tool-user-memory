@@ -3,10 +3,13 @@
  *
  * A Cordis plugin that gives the agent a persisted, cross-session memory of
  * user preferences:
- *   - `memory_get` / `memory_update` / `memory_search` / `memory_topic` model-facing tools
+ *   - `memory_get` / `memory_update` / `memory_search` / `memory_topic` /
+ *     `memory_consolidate` model-facing tools
  *   - a `{{user_profile}}` system-prompt variable injected every turn
  *   - a per-workspace memory layer (regenerable index + topic files)
  *     under $DSH_HOME, resolved from the session's cwd
+ *   - background consolidation ("dreaming") at turn boundaries plus a manual
+ *     tool, with an auditable consolidation log
  *
  * The profile lives in a single Markdown file under $DSH_HOME (global,
  * human-readable, deletable = forgetting).
@@ -14,9 +17,22 @@
 
 import z from '@deepseek-ai/schemastery';
 import type { Context } from '@deepseek-ai/cordis';
+import type { Agent } from '@deepseek-ai/dsh-agent';
+import { dshHomePath } from '@deepseek-ai/dsh-home-paths';
+import {
+  appendConsolidationLog,
+  applyPlan,
+  describeOp,
+  planDeterministic,
+  proposeOpsWithModel,
+  type ConsolidateOutcome,
+  type ConsolidateRequest,
+  type LlmLike,
+} from './consolidate.ts';
 import { DEFAULT_MAX_BYTES, createMemoryStore } from './store.ts';
 import { registerMemoryTools } from './tools.ts';
 import { registerProfilePrompt } from './prompt.ts';
+import { createWorkspaceMemory } from './workspace.ts';
 
 export const name = 'tool-user-memory';
 
@@ -28,6 +44,9 @@ export const DEFAULT_PROMPT_MAX_BYTES = 2048;
 
 /** Default per-turn injection budget for the workspace memory index; 0 disables it. */
 export const DEFAULT_WORKSPACE_PROMPT_MAX_BYTES = 512;
+
+/** Default minimum interval between automatic consolidation runs (10 minutes). */
+export const DEFAULT_CONSOLIDATE_MIN_INTERVAL_MS = 600_000;
 
 export const Config = z.object({
   path: z.string().default('').description('Profile file path; defaults to $DSH_HOME/user-memory/user.md'),
@@ -61,6 +80,39 @@ export const Config = z.object({
     .string()
     .default('')
     .description('Override the workspace memory base directory (defaults to $DSH_HOME/user-memory/workspace); mainly for testing'),
+  autoConsolidate: z
+    .boolean()
+    .default(false)
+    .description('Run a background consolidation pass at agent turn boundaries (debounced by consolidateMinIntervalMs)'),
+  consolidateMinIntervalMs: z
+    .number()
+    .min(0)
+    .default(DEFAULT_CONSOLIDATE_MIN_INTERVAL_MS)
+    .description('Minimum interval between automatic consolidation runs; 0 = every turn boundary'),
+  autoInvalidateAfterDays: z
+    .number()
+    .min(0)
+    .default(0)
+    .description(
+      'Consolidation invalidates entries not updated for N days (they stay in the file for audit); 0 = never auto-invalidate',
+    ),
+  consolidateProvider: z
+    .string()
+    .default('')
+    .description('Provider route for the optional model-assisted consolidation pass (e.g. deepseek)'),
+  consolidateModel: z
+    .string()
+    .default('')
+    .description('Model id for the optional model-assisted consolidation pass'),
+  consolidateMaxTokens: z
+    .number()
+    .min(0)
+    .default(1024)
+    .description('Max output tokens for one consolidation model call'),
+  consolidationLogPath: z
+    .string()
+    .default('')
+    .description('Consolidation log path; defaults to $DSH_HOME/user-memory/consolidation-log.md'),
 });
 
 /** Validated config shape (schemastery has no z.infer; kept structural). */
@@ -72,21 +124,136 @@ export interface UserMemoryConfig {
   staleAfterDays: number;
   workspacePromptMaxBytes: number;
   workspaceBase: string;
+  autoConsolidate: boolean;
+  consolidateMinIntervalMs: number;
+  autoInvalidateAfterDays: number;
+  consolidateProvider: string;
+  consolidateModel: string;
+  consolidateMaxTokens: number;
+  consolidationLogPath: string;
 }
 
 export function apply(ctx: Context, config: UserMemoryConfig): void {
   const store = createMemoryStore({ path: config.path, maxBytes: config.maxBytes });
+  const staleAfterDays = config.staleAfterDays ?? 0;
+  const workspaceBase = config.workspaceBase ?? '';
+  const autoInvalidateAfterDays = config.autoInvalidateAfterDays ?? 0;
+  const provider = (config.consolidateProvider ?? '').trim();
+  const model = (config.consolidateModel ?? '').trim();
+  const maxTokens = config.consolidateMaxTokens ?? 1024;
+  const logPath =
+    (config.consolidationLogPath ?? '').trim() === ''
+      ? dshHomePath('user-memory', 'consolidation-log.md')
+      : (config.consolidationLogPath ?? '').trim();
+  // Resolved structurally through the optional-accessor so the plugin carries
+  // no hard llm dependency (declaring `llm` in `inject` would keep the whole
+  // plugin dormant in contexts without a model runtime): the model-assisted
+  // pass simply stays off when no llm service is mounted.
+  const llm = ctx.get('llm') as LlmLike | undefined;
+  const modelConfigured = provider !== '' && model !== '' && llm !== undefined;
+
   registerProfilePrompt(
     ctx,
     store,
     config.includeInPrompt !== false,
     config.promptMaxBytes ?? DEFAULT_PROMPT_MAX_BYTES,
-    config.staleAfterDays ?? 0,
+    staleAfterDays,
     config.workspacePromptMaxBytes ?? DEFAULT_WORKSPACE_PROMPT_MAX_BYTES,
-    config.workspaceBase ?? '',
+    workspaceBase,
   );
-  registerMemoryTools(ctx, store, {
-    staleAfterDays: config.staleAfterDays ?? 0,
-    workspaceBase: config.workspaceBase ?? '',
-  });
+
+  /**
+   * One consolidation run: deterministic rules always, the model layer only
+   * when asked and configured. `mode: 'plan'` never writes.
+   */
+  async function consolidate(request: ConsolidateRequest): Promise<ConsolidateOutcome> {
+    const now = new Date().toISOString();
+    const entries = await store.list();
+    const topics = request.workspace === null ? [] : await request.workspace.list();
+    const plan = planDeterministic({ entries, topics, now, staleAfterDays, autoInvalidateAfterDays });
+    let modelError: string | undefined;
+
+    if (request.useModel) {
+      if (!modelConfigured) {
+        modelError = 'no consolidation model configured (set consolidateProvider + consolidateModel)';
+      } else if (llm !== undefined) {
+        const proposal = await proposeOpsWithModel(
+          llm,
+          { provider, model, maxTokens },
+          { entries, topics, now },
+        );
+        if (proposal.error !== undefined) modelError = proposal.error;
+        const known = new Set(plan.ops.map(describeOp));
+        for (const op of proposal.ops) {
+          const label = describeOp(op);
+          if (known.has(label)) continue;
+          known.add(label);
+          plan.ops.push(op);
+        }
+        if (proposal.dropped > 0) plan.notes.push(`${proposal.dropped} model op(s) dropped as invalid`);
+      }
+    }
+
+    if (request.mode === 'plan') {
+      return {
+        plan,
+        record: {
+          at: now,
+          source: request.source,
+          ...(request.workspacePath === undefined ? {} : { workspace: request.workspacePath }),
+          applied: [],
+          skipped: [],
+          notes: plan.notes,
+        },
+        ...(modelError === undefined ? {} : { modelError }),
+      };
+    }
+
+    const record = await applyPlan(
+      store,
+      request.workspace,
+      plan,
+      request.source,
+      request.workspacePath,
+    );
+    // The log is the audit trail; a log failure must not undo memory writes.
+    await appendConsolidationLog(logPath, record).catch(() => undefined);
+    return { plan, record, ...(modelError === undefined ? {} : { modelError }) };
+  }
+
+  registerMemoryTools(ctx, store, { staleAfterDays, workspaceBase, consolidate });
+
+  if (config.autoConsolidate === true) {
+    const minInterval = config.consolidateMinIntervalMs ?? DEFAULT_CONSOLIDATE_MIN_INTERVAL_MS;
+    let lastRunAt = 0;
+    let running = false;
+    const runInBackground = async (agent: Agent | undefined): Promise<void> => {
+      if (running) return;
+      if (minInterval > 0 && Date.now() - lastRunAt < minInterval) return;
+      running = true;
+      lastRunAt = Date.now();
+      try {
+        const cwd = agent?.session?.header?.cwd;
+        const ws =
+          typeof cwd === 'string' && cwd !== ''
+            ? await createWorkspaceMemory({ cwd, baseDir: workspaceBase })
+            : null;
+        await consolidate({
+          source: 'turn',
+          mode: 'apply',
+          useModel: modelConfigured,
+          workspace: ws,
+          ...(ws === null ? {} : { workspacePath: ws.path }),
+        });
+      } catch {
+        // Background work must never surface into the session.
+      } finally {
+        running = false;
+      }
+    };
+    ctx.on('agent/turn-stopping', (payload) => {
+      // Fire-and-forget: consolidation must not delay the turn boundary.
+      void runInBackground(payload?.agent);
+    });
+  }
 }

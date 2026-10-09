@@ -7,7 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +16,7 @@ import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-test
 import { renderPrompt } from '@deepseek-ai/dsh-system-prompt';
 import type { CallId } from '@deepseek-ai/dsh-llm';
 import * as ToolUserMemory from '../src/index.ts';
+import { ConsolidationStubAdapter } from './stub-adapter.ts';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -42,6 +43,7 @@ async function mountProfile(
   staleAfterDays = 0,
   workspaceBase = '',
   workspacePromptMaxBytes = 512,
+  extra: Record<string, unknown> = {},
 ): Promise<void> {
   await ctx.plugin(ToolUserMemory, {
     path: file,
@@ -51,6 +53,7 @@ async function mountProfile(
     staleAfterDays,
     workspaceBase,
     workspacePromptMaxBytes,
+    ...extra,
   });
 }
 
@@ -439,5 +442,93 @@ test('harness: workspacePromptMaxBytes=0 disables workspace injection', async ()
     await disposeCtx(ctx);
     rmSync(dir, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('harness: memory_consolidate plans without writing, then applies and logs', async () => {
+  const { dir, file } = tempProfile();
+  const logPath = join(dir, 'consolidation-log.md');
+  const ctx = new Context();
+  try {
+    await mountAgentLoopTestDependencies(ctx);
+    await mountProfile(ctx, file, true, 2048, 0, '', 512, { consolidationLogPath: logPath });
+    await runUpdate(ctx, 40, 'project', 'rag-service');
+    await runUpdate(ctx, 41, 'project-dup', 'rag-service');
+    await runUpdate(ctx, 42, 'plan', 'tomorrow I ship the release');
+
+    const planned = await runTool(ctx, 43, 'memory_consolidate', {});
+    assert.equal(planned.isError, false);
+    const pv = planned.value as { proposed?: number; applied?: number; rendered?: string };
+    assert.equal(pv.applied, 0, 'plan mode writes nothing');
+    assert.ok((pv.proposed ?? 0) >= 2, 'duplicate + relative date are proposed');
+    assert.ok(!existsSync(logPath), 'plan mode writes no log');
+
+    const applied = await runTool(ctx, 44, 'memory_consolidate', { mode: 'apply' });
+    const av = applied.value as { applied?: number; rendered?: string };
+    assert.ok((av.applied ?? 0) >= 2);
+    assert.ok(existsSync(logPath), 'apply mode writes the audit log');
+    const log = readFileSync(logPath, 'utf8');
+    assert.ok(log.startsWith('# Consolidation Log'));
+    assert.ok(log.includes('— manual'));
+    assert.ok(log.includes('merge('));
+
+    const got = await runTool(ctx, 45, 'memory_get', {});
+    const gv = got.value as { rendered?: string };
+    assert.ok(gv.rendered?.includes('(recorded '), 'relative date is anchored in the profile');
+  } finally {
+    await disposeCtx(ctx);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('harness: useModel applies model-proposed ops through the real llm service', async () => {
+  const { dir, file } = tempProfile();
+  const logPath = join(dir, 'consolidation-log.md');
+  const ctx = new Context();
+  try {
+    await mountAgentLoopTestDependencies(ctx);
+    const adapter = new ConsolidationStubAdapter();
+    ctx.llm.registerAdapter(['stub'], adapter);
+    await mountProfile(ctx, file, true, 2048, 0, '', 512, {
+      consolidationLogPath: logPath,
+      consolidateProvider: 'stub',
+      consolidateModel: 'stub-model',
+    });
+    await runUpdate(ctx, 46, 'language', 'zh-CN');
+
+    const result = await runTool(ctx, 47, 'memory_consolidate', { mode: 'apply', useModel: true });
+    assert.equal(result.isError, false);
+    const value = result.value as { applied?: number; modelError?: string };
+    assert.equal(value.modelError, '', 'the model call succeeded');
+    assert.ok((value.applied ?? 0) >= 1);
+    assert.equal(adapter.calls, 1, 'exactly one consolidation model call');
+
+    const got = await runTool(ctx, 48, 'memory_get', { query: 'timezone' });
+    const rendered = (got.value as { rendered?: string }).rendered ?? '';
+    assert.ok(rendered.includes('timezone'));
+    assert.ok(rendered.includes('UTC+8'), 'model-proposed entry was written');
+    assert.ok(readFileSync(logPath, 'utf8').includes('add(timezone)'));
+  } finally {
+    await disposeCtx(ctx);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('harness: useModel without a configured model degrades with a clear reason', async () => {
+  const { dir, file } = tempProfile();
+  const logPath = join(dir, 'consolidation-log.md');
+  const ctx = new Context();
+  try {
+    await mountAgentLoopTestDependencies(ctx);
+    await mountProfile(ctx, file, true, 2048, 0, '', 512, { consolidationLogPath: logPath });
+    await runUpdate(ctx, 49, 'project', 'rag-service');
+    await runUpdate(ctx, 50, 'project-dup', 'rag-service');
+    const result = await runTool(ctx, 51, 'memory_consolidate', { mode: 'apply', useModel: true });
+    const value = result.value as { applied?: number; modelError?: string };
+    assert.ok(value.modelError?.includes('no consolidation model configured'));
+    assert.ok((value.applied ?? 0) >= 1, 'deterministic ops still apply');
+  } finally {
+    await disposeCtx(ctx);
+    rmSync(dir, { recursive: true, force: true });
   }
 });

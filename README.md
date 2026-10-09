@@ -29,6 +29,7 @@
 | `memory_get(query?, limit?, includeStale?)` | 需要个性化回答时，主动读取你的画像 |
 | `memory_search(query?, limit?, includeStale?)` | 跨「全局画像 + 当前工作区记忆」的关键词检索（带评分与一行摘要） |
 | `memory_topic(topic)` | 读取某个工作区记忆主题的全文（懒加载） |
+| `memory_consolidate(mode?, useModel?)` | 整理记忆：合并重复、锚定相对时间、失效过时条目，产出审计日志 |
 | `{{user_profile}}` 系统提示词注入 | **每个会话每轮自动携带**你的画像 + 当前工作区记忆索引（两者都空则零 token 成本） |
 | 记忆分层 | 全局画像 + 工作区记忆（索引 + 主题文件），全部人类可读、可手改、可删除 |
 
@@ -93,6 +94,12 @@ dsh plugin --profile web add ./dsh-tool-user-memory-0.2.0.tgz
 | `staleAfterDays` | `0` | N 天未更新的条目带 `[stale: last updated Nd ago]` 标注（仅标注、绝不删除）；`0` = 关闭 |
 | `workspacePromptMaxBytes` | `512` | 每轮注入的工作区记忆索引字节预算（正文懒加载）；`0` = 不注入工作区记忆 |
 | `workspaceBase` | `$DSH_HOME/user-memory/workspace` | 工作区记忆根目录（主要用于测试或自定义布局） |
+| `autoConsolidate` | `false` | 在回合边界后台自动整理记忆（去抖、不阻塞回合） |
+| `consolidateMinIntervalMs` | `600000` | 两次自动整理的最小间隔；`0` = 每个回合边界都整理 |
+| `autoInvalidateAfterDays` | `0` | 超过 N 天未更新的条目由整理自动软失效（仍留在文件里可审计）；`0` = 不自动失效 |
+| `consolidateProvider` / `consolidateModel` | `''` | 可选的模型辅助整理（留空则只用确定性规则） |
+| `consolidateMaxTokens` | `1024` | 单次整理模型调用的输出上限 |
+| `consolidationLogPath` | `$DSH_HOME/user-memory/consolidation-log.md` | 整理审计日志路径 |
 
 ---
 
@@ -234,13 +241,29 @@ $DSH_HOME/user-memory/
 
 返回 `{ ok, topic, updatedAt, invalidated, invalidReason, body }`——即主题全文（懒加载，不进每轮提示词）。
 
+### `memory_consolidate`
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `mode` | 否 | `plan`（默认，只报告将要执行的整理动作）/ `apply`（执行并写审计日志） |
+| `useModel` | 否 | 是否额外请求配置好的整理模型（需 `consolidateProvider` + `consolidateModel`） |
+
+**整理做什么**：
+
+1. **合并重复**：值归一化后相同的条目只留最新一条，其余软失效（附"与 X 相同"原因）；
+2. **锚定相对时间**：含「今天/明天/下周」等相对时间的条目追加一行绝对记录日期（只加一次，不改写你的原话）；
+3. **老化**：超过 `staleAfterDays` 的条目进入运行记录，超过 `autoInvalidateAfterDays` 的条目自动软失效；
+4. **模型辅助**（可选）：用一次独立模型调用提出 `add`/`merge`/`rewrite`/`invalidate`/`topic-*` 操作，逐个校验后执行；模型不可用或返回非法内容时自动降级为确定性结果。
+
+每次运行都会追加到 `$DSH_HOME/user-memory/consolidation-log.md`：时间、触发源（手动/回合边界）、逐条执行与跳过原因——**你随时能看到记忆被改了什么、为什么**。
+
 ---
 
 ## 7. 从源码开发
 
 ```sh
 pnpm install
-pnpm test           # 52/52：单测 + 存储集成 + 工作区记忆 + harness 集成 + 完整 AgentLoop 循环级测试
+pnpm test           # 68/68：单测 + 存储集成 + 工作区记忆 + 后台整理 + harness 集成 + 完整 AgentLoop 循环级测试
 pnpm run build       # tsc → lib/
 ```
 
@@ -256,7 +279,7 @@ v2 路线基于 2026-10 对 OpenAI（Dreaming）、Claude Code（自动记忆分
 - ✅ **时间语义**（0.2.0 已实现）：软失效（`mode=invalidate` + `reason`，保留历史不删除）+ 老化配置 `staleAfterDays` + `memory_get(includeStale)` 审计，让记忆「随时间保持正确」（对照 OpenAI 三轴：事实回忆 / 偏好遵循 / 时间正确）
 - ✅ **记忆分层**（0.2.0 已实现）：全局画像 + 工作区级记忆（索引 + 主题文件，懒加载，对齐 Claude Code auto-memory 结构）；工作区身份 = `sha256(realpath(cwd))`，按会话 `cwd` 自动归属
 - ✅ **`memory_search`**（0.2.0 已实现）：文件检索优先（关键词 + 评分 + 一行摘要）；向量召回仅在条目量级很大（> ~500）时才值得引入（Letta 基准：个人规模下纯文件检索已超过 Mem0 图方案）
-- **后台巩固（"dreaming"）**：会话空闲 / compaction / 定时触发，后台 LLM 提取、合并、时间改写（「要去」→「去过」）、失效，产出可审计的 consolidation log
+- ✅ **后台巩固（"dreaming"）**（0.2.0 已实现）：**回合边界**异步触发（可开关、可去抖，不阻塞回合）+ 手动 `memory_consolidate`；确定性规则（合并重复 / 相对时间锚定 / 老化失效）打底，可选模型辅助（`consolidateProvider` + `consolidateModel`）提出 ops 并逐条校验；全程写入可审计的 `consolidation-log.md`。**尚未做**：会话空闲 / 定时（`schedule` 子系统）触发，留待后续版本
 - 多用户画像（按会话身份分文件）
 
 ---

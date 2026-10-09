@@ -35,6 +35,7 @@ This plugin gives the agent a **persisted user profile**:
 | `memory_get(query?, limit?, includeStale?)` | The agent reads your profile when personalisation matters |
 | `memory_search(query?, limit?, includeStale?)` | Keyword search across the global profile **and** the current workspace's memory (scored, with one-line snippets) |
 | `memory_topic(topic)` | Reads one workspace memory topic in full (lazy load) |
+| `memory_consolidate(mode?, useModel?)` | Tidies memory: merges duplicates, anchors relative dates, retires stale facts, and writes an audit log |
 | `{{user_profile}}` system-prompt injection | **Every turn of every session** carries your profile plus the current workspace memory index (zero token cost while both are empty) |
 | Layered memory | Global profile + per-workspace memory (index + topic files) — all human-readable, editable, deletable |
 
@@ -102,6 +103,12 @@ profile's `cordis.patch.yml`:
 | `staleAfterDays` | `0` | Entries not updated within N days get a `[stale: last updated Nd ago]` annotation (annotation only, never deleted); `0` = off |
 | `workspacePromptMaxBytes` | `512` | Per-turn byte budget for the injected workspace memory index (bodies stay lazy); `0` = no workspace injection |
 | `workspaceBase` | `$DSH_HOME/user-memory/workspace` | Workspace memory root directory (mainly for testing or custom layouts) |
+| `autoConsolidate` | `false` | Run a background tidy at turn boundaries (debounced, never blocks the turn) |
+| `consolidateMinIntervalMs` | `600000` | Minimum interval between automatic runs; `0` = every turn boundary |
+| `autoInvalidateAfterDays` | `0` | Consolidation soft-invalidates entries not updated for N days (they stay in the file for audit); `0` = never |
+| `consolidateProvider` / `consolidateModel` | `''` | Optional model-assisted consolidation (empty = deterministic rules only) |
+| `consolidateMaxTokens` | `1024` | Output cap for one consolidation model call |
+| `consolidationLogPath` | `$DSH_HOME/user-memory/consolidation-log.md` | Audit log path |
 
 ---
 
@@ -251,13 +258,29 @@ Returns `{ ok, total, results: [{ scope, topic, score, updatedAt, snippet }] }`.
 
 Returns `{ ok, topic, updatedAt, invalidated, invalidReason, body }` — the full topic text (lazy-loaded; it never enters the per-turn prompt).
 
+### `memory_consolidate`
+
+| Arg | Required | Description |
+|---|---|---|
+| `mode` | no | `plan` (default — report the ops) / `apply` (perform them and write the log) |
+| `useModel` | no | Also ask the configured consolidation model (needs `consolidateProvider` + `consolidateModel`) |
+
+**What consolidation does**:
+
+1. **Merge duplicates** — entries whose values normalize to the same text keep only the newest; the rest are soft-invalidated with a "same value as X" reason;
+2. **Anchor relative dates** — entries mentioning today/tomorrow/next week gain one absolute recorded-date line (added once; your own words are never rewritten);
+3. **Aging** — entries past `staleAfterDays` are reported, entries past `autoInvalidateAfterDays` are soft-invalidated;
+4. **Model assistance** (optional) — one auxiliary model call proposes `add`/`merge`/`rewrite`/`invalidate`/`topic-*` ops which are validated before use; an unavailable or malformed answer degrades to the deterministic result.
+
+Every run is appended to `$DSH_HOME/user-memory/consolidation-log.md`: when it ran, what triggered it (manual / turn boundary), and each applied or skipped op with its reason — **you can always see what changed in your memory and why**.
+
 ---
 
 ## 7. Development
 
 ```sh
 pnpm install
-pnpm test           # 52/52: unit + storage integration + workspace memory + harness integration + full AgentLoop test
+pnpm test           # 68/68: unit + storage integration + workspace memory + consolidation + harness integration + full AgentLoop test
 pnpm run build       # tsc → lib/
 ```
 
@@ -277,7 +300,7 @@ The v2 roadmap follows the 2026-10 survey of memory architectures at OpenAI (Dre
 - ✅ **Temporal semantics** (implemented in 0.2.0): soft invalidation (`mode=invalidate` + `reason`, history preserved, never deleted) + aging config `staleAfterDays` + `memory_get(includeStale)` audit, so memories "stay correct over time" (benchmarked against OpenAI's three axes: fact recall / preference adherence / temporal correctness)
 - ✅ **Memory layering** (implemented in 0.2.0): global profile + per-workspace memory (index + topic files, lazy-loaded, mirroring Claude Code auto-memory); workspace identity = `sha256(realpath(cwd))`, resolved automatically from the session's cwd
 - ✅ **`memory_search`** (implemented in 0.2.0): file-based search first (keyword + scoring + one-line snippets); embedding recall only becomes worthwhile at a much larger scale (> ~500 entries; Letta benchmark: plain file search already beats Mem0's graph approach at personal scale)
-- **Background consolidation ("dreaming")**: triggered on session idle / compaction / schedule; a background LLM pass extracts, merges, rewrites time (future → past), and invalidates, writing an auditable consolidation log
+- ✅ **Background consolidation ("dreaming")** (implemented in 0.2.0): asynchronous **at turn boundaries** (opt-in, debounced, never blocks the turn) plus a manual `memory_consolidate`; deterministic rules (duplicate merge / relative-date anchoring / aging) as the base, with optional model assistance (`consolidateProvider` + `consolidateModel`) proposing validated ops; every run lands in an auditable `consolidation-log.md`. **Not yet**: idle / scheduled triggers (the `schedule` subsystem) — planned for a later release
 - Per-user profiles (keyed by session identity)
 
 ---

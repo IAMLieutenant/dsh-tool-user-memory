@@ -15,6 +15,10 @@ import { defineTool } from '@deepseek-ai/dsh-tools';
 import type { Context } from '@deepseek-ai/cordis';
 import type { JsonValue } from '@deepseek-ai/dsh-util-values';
 import { renderEntries, type MergeMode, type RenderOptions } from './profile.ts';
+import {
+  renderConsolidationOutcome,
+  type ConsolidateRunner,
+} from './consolidate.ts';
 import type { MemoryStore } from './store.ts';
 import {
   createWorkspaceMemory,
@@ -27,6 +31,8 @@ export interface MemoryToolsOptions {
   staleAfterDays?: number;
   /** Base directory override for workspace memory (mainly for testing). */
   workspaceBase?: string;
+  /** Background-consolidation entry point, supplied by the composition root. */
+  consolidate?: ConsolidateRunner;
 }
 
 /** Read a field off a JSON-schema-typed render value defensively. */
@@ -80,6 +86,7 @@ function renderSearchResults(value: unknown): { type: 'text'; text: string } {
 export function registerMemoryTools(ctx: Context, store: MemoryStore, options: MemoryToolsOptions = {}): void {
   const staleAfterDays = options.staleAfterDays ?? 0;
   const workspaceBase = options.workspaceBase ?? '';
+  const consolidate = options.consolidate;
   const profilePath = store.path();
 
   ctx.tools.register(
@@ -347,6 +354,64 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
           invalidated: topic.invalidatedAt,
           invalidReason: topic.invalidReason,
           body: topic.body,
+        };
+      },
+    }),
+  );
+
+  ctx.tools.register(
+    defineTool({
+      name: 'memory_consolidate',
+      description: [
+        'Review and tidy the recorded user memory: merge duplicate entries, anchor',
+        'relative dates to a real date, and retire facts that stopped being true.',
+        'mode=plan (default) only reports what would change; mode=apply performs it',
+        'and appends an auditable record to the consolidation log.',
+        'The plugin can also run this automatically in the background when',
+        'autoConsolidate is enabled; call it manually after a long session, or when',
+        'the memory feels stale or contradictory.',
+      ].join('\n'),
+      parameters: {
+        mode: {
+          type: 'string',
+          enum: ['plan', 'apply'],
+          description: 'plan (default) reports the ops; apply performs them and writes the log',
+        },
+        useModel: {
+          type: 'boolean',
+          description:
+            'Also ask the configured consolidation model for ops (requires consolidateProvider/consolidateModel)',
+        },
+      },
+      output: {
+        schema: { type: 'object', additionalProperties: true },
+        render: (_args, value) => [{ type: 'text', text: fieldOf(value, 'rendered') }],
+      },
+      async execute(
+        args: { mode?: 'plan' | 'apply'; useModel?: boolean },
+        exec: { agent?: { session?: { header?: { cwd?: string } } } },
+      ): Promise<Record<string, JsonValue>> {
+        if (consolidate === undefined) {
+          return { ok: false, error: 'consolidation is not wired in this instance' };
+        }
+        const ws = await workspaceFor(exec, workspaceBase);
+        const useModel = args.useModel === true;
+        const outcome = await consolidate({
+          source: 'manual',
+          mode: args.mode === 'apply' ? 'apply' : 'plan',
+          useModel,
+          workspace: ws,
+          ...(ws === null ? {} : { workspacePath: ws.path }),
+        });
+        return {
+          ok: true,
+          mode: args.mode === 'apply' ? 'apply' : 'plan',
+          proposed: outcome.plan.ops.length,
+          applied: outcome.record.applied.length,
+          skipped: outcome.record.skipped.length,
+          notes: outcome.plan.notes,
+          modelError: outcome.modelError ?? '',
+          rendered: renderConsolidationOutcome(outcome),
         };
       },
     }),

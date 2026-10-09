@@ -18,6 +18,7 @@ const files =
         'tests/profile.test.ts',
         'tests/store.test.ts',
         'tests/workspace.test.ts',
+        'tests/consolidate.test.ts',
         'tests/harness.test.ts',
         'tests/loop.test.ts',
       ];

@@ -132,3 +132,45 @@ test('store: a single oversized value is truncated, never dropped', async () => 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('store: invalidate keeps the value, records reason; set revives', async () => {
+  const dir = tempDir();
+  try {
+    const file = join(dir, 'user.md');
+    const store = createMemoryStore({ path: file, maxBytes: 8192 });
+    await store.update('project', 'rag-service', 'set');
+    const result = await store.update('project', '', 'invalidate', 'moved to agent platform');
+    assert.equal(result.ok, true);
+    let entries = await store.list();
+    assert.ok(/^\d{4}-\d{2}-\d{2}T/.test(entries[0]!.invalidatedAt));
+    assert.equal(entries[0]!.invalidReason, 'moved to agent platform');
+    assert.equal(entries[0]!.value, 'rag-service');
+    let text = readFileSync(file, 'utf8');
+    assert.ok(text.includes('<!-- invalid:'));
+    assert.ok(text.includes('moved to agent platform'));
+    const revived = await store.update('project', 'agent-platform', 'set');
+    assert.equal(revived.ok, true);
+    entries = await store.list();
+    assert.equal(entries[0]!.invalidatedAt, '');
+    assert.equal(entries[0]!.invalidReason, '');
+    assert.equal(entries[0]!.value, 'agent-platform');
+    text = readFileSync(file, 'utf8');
+    assert.ok(!text.includes('<!-- invalid:'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('store: invalidating an unknown key fails cleanly', async () => {
+  const dir = tempDir();
+  try {
+    const file = join(dir, 'user.md');
+    const store = createMemoryStore({ path: file, maxBytes: 8192 });
+    const result = await store.update('ghost', '', 'invalidate', 'why');
+    assert.equal(result.ok, false);
+    assert.ok(result.error?.includes('does not exist'));
+    assert.equal(await store.read(), '');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

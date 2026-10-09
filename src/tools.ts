@@ -6,7 +6,7 @@
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import type { Context } from '@deepseek-ai/cordis';
 import type { JsonValue } from '@deepseek-ai/dsh-util-values';
-import { renderEntries, type MergeMode } from './profile.ts';
+import { renderEntries, type MergeMode, type RenderOptions } from './profile.ts';
 import type { MemoryStore } from './store.ts';
 
 /** Read a field off a JSON-schema-typed render value defensively. */
@@ -27,7 +27,7 @@ function evictedOf(value: unknown): string[] {
   return Array.isArray(evicted) ? evicted.map((item) => String(item)) : [];
 }
 
-export function registerMemoryTools(ctx: Context, store: MemoryStore): void {
+export function registerMemoryTools(ctx: Context, store: MemoryStore, staleAfterDays = 0): void {
   const profilePath = store.path();
 
   ctx.tools.register(
@@ -37,11 +37,17 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore): void {
         'Read the user preference memory (persisted across sessions).',
         'Call this when you need to personalise a response: preferred language,',
         'communication style, project background, or any previously recorded preference.',
+        'Invalidated (superseded) entries are hidden by default; pass includeStale=true to audit them.',
         `Profile file: ${profilePath}`,
       ].join('\n'),
       parameters: {
         query: { type: 'string', description: 'Optional keyword; filters entries by key or value' },
         limit: { type: 'number', description: 'Max entries to return (default 50, max 100)' },
+        includeStale: {
+          type: 'boolean',
+          description:
+            'Also return invalidated entries (clearly marked); default false. Use for auditing what was superseded.',
+        },
       },
       output: {
         schema: { type: 'object', additionalProperties: true },
@@ -50,23 +56,28 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore): void {
       async execute(args: {
         query?: string;
         limit?: number;
+        includeStale?: boolean;
       }): Promise<Record<string, JsonValue>> {
         const entries = await store.list();
         const query = (args.query ?? '').trim().toLowerCase();
-        const filtered =
-          query === ''
-            ? entries
-            : entries.filter(
-                (entry) =>
-                  entry.key.toLowerCase().includes(query) ||
-                  entry.value.toLowerCase().includes(query),
-              );
+        const matches = (entry: { key: string; value: string }): boolean =>
+          query === '' ||
+          entry.key.toLowerCase().includes(query) ||
+          entry.value.toLowerCase().includes(query);
+        const valid = entries.filter((entry) => !entry.invalidatedAt && matches(entry));
+        const invalidated = entries.filter((entry) => entry.invalidatedAt && matches(entry));
+        const combined = args.includeStale ? [...valid, ...invalidated] : valid;
         const limit = Math.max(0, Math.min(args.limit ?? 50, 100));
-        const slice = filtered.slice(0, limit);
-        const rendered =
-          renderEntries(slice) === '' ? '(no user memory recorded yet)' : renderEntries(slice);
+        const slice = combined.slice(0, limit);
+        const options: RenderOptions = { now: new Date().toISOString(), staleAfterDays };
+        const body = renderEntries(slice, options);
         // Canonical value stays scalar + rendered text; the model sees `rendered`.
-        return { ok: true, total: entries.length, rendered };
+        return {
+          ok: true,
+          total: combined.length,
+          invalidated: invalidated.length,
+          rendered: body === '' ? '(no user memory recorded yet)' : body,
+        };
       },
     }),
   );
@@ -80,6 +91,10 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore): void {
         'themselves or their project, or states a goal ("I prefer short answers",',
         '"I work on RAG retrieval", "my goal is to contribute to the harness").',
         'Do NOT store one-off requests, and NEVER store credentials, passwords or tokens.',
+        'When a recorded preference is SUPERSEDED (project/role/goal changed), prefer',
+        'mode=invalidate over remove: the old entry stays in the file for audit (marked',
+        'with date + reason) but is hidden from the prompt and from memory_get.',
+        'Calling set or append on an invalidated key revives it.',
         `Profile file: ${profilePath}`,
       ].join('\n'),
       parameters: {
@@ -89,11 +104,21 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore): void {
           description:
             'Preference key, e.g. language, communication-style, project-background',
         },
-        value: { type: 'string', required: true, description: 'Preference content' },
+        value: {
+          type: 'string',
+          required: true,
+          description: 'Preference content (pass "" for mode=invalidate and mode=remove)',
+        },
         mode: {
           type: 'string',
-          enum: ['set', 'append', 'remove'],
-          description: 'set (default) replaces, append adds a line, remove deletes the key',
+          enum: ['set', 'append', 'remove', 'invalidate'],
+          description:
+            'set (default) replaces and revives, append adds a line, remove deletes the key, invalidate soft-deletes it (keeps history, hides it from the prompt)',
+        },
+        reason: {
+          type: 'string',
+          description:
+            'For mode=invalidate: why the memory is no longer correct (e.g. "superseded by project-agent-platform"). Stored with the entry for audit.',
         },
       },
       output: {
@@ -103,9 +128,14 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore): void {
             return [{ type: 'text', text: `memory update failed: ${fieldOf(value, 'error') || 'unknown error'}` }];
           }
           const evicted = evictedOf(value);
+          const mode = fieldOf(value, 'mode');
           const text =
-            `memory updated (${fieldOf(value, 'key')})` +
-            (evicted.length > 0 ? `; evicted older entries to stay within limit: ${evicted.join(', ')}` : '');
+            mode === 'invalidate'
+              ? `memory invalidated (${fieldOf(value, 'key')}) — kept in file for audit, hidden from the prompt`
+              : `memory updated (${fieldOf(value, 'key')})` +
+                (evicted.length > 0
+                  ? `; evicted older entries to stay within limit: ${evicted.join(', ')}`
+                  : '');
           return [{ type: 'text', text }];
         },
       },
@@ -113,8 +143,9 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore): void {
         key: string;
         value: string;
         mode?: MergeMode;
+        reason?: string;
       }): Promise<Record<string, JsonValue>> {
-        const result = await store.update(args.key, args.value, args.mode ?? 'set');
+        const result = await store.update(args.key, args.value, args.mode ?? 'set', args.reason ?? '');
         return result.ok
           ? {
               ok: true,

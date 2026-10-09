@@ -31,7 +31,7 @@ This plugin gives the agent a **persisted user profile**:
 
 | Capability | Description |
 |---|---|
-| `memory_update(key, value, mode?)` | The agent records / appends / removes a stable preference it just learned |
+| `memory_update(key, value, mode?, reason?)` | The agent records / appends / soft-invalidates / removes a stable preference it just learned |
 | `memory_get(query?, limit?)` | The agent reads your profile when personalisation matters |
 | `{{user_profile}}` system-prompt injection | **Every turn of every session** carries your profile (zero token cost while empty) |
 | Durable storage | `$DSH_HOME/user-memory/user.md` — human-readable, editable, deletable |
@@ -97,6 +97,7 @@ profile's `cordis.patch.yml`:
 | `maxBytes` | `8192` | Max profile file bytes; oldest entries are evicted first when exceeded |
 | `promptMaxBytes` | `2048` | Per-turn injection byte budget (newest first); `0` injects the full profile |
 | `includeInPrompt` | `true` | Inject the profile into every session's system prompt |
+| `staleAfterDays` | `0` | Entries not updated within N days get a `[stale: last updated Nd ago]` annotation (annotation only, never deleted); `0` = off |
 
 ---
 
@@ -148,7 +149,8 @@ Just say it — the agent calls `memory_update` itself:
 
 ### Scenario C — edit / forget
 
-> "Forget my preference for X" (the agent calls `memory_update mode=remove`)
+> "Forget my preference for X" (the agent calls `memory_update mode=remove`, hard delete)
+> "I actually switched from project X to project Y" (the agent calls `memory_update mode=invalidate` + `reason`: soft invalidation — history kept, behaviour no longer affected)
 
 You can also **hand-edit the profile file** (`$DSH_HOME/user-memory/user.md`) — it
 is plain Markdown, changes take effect immediately, and **deleting the file wipes
@@ -196,18 +198,20 @@ Direct, minimal pleasantries
 |---|---|---|
 | `query` | no | Keyword; filters entries by key or value |
 | `limit` | no | Max entries (default 50, max 100) |
+| `includeStale` | no | `true` = also return invalidated entries (marked with invalidation time + reason), for auditing |
 
-Returns `{ ok, total, rendered }` (`rendered` is the model-facing text).
+Returns `{ ok, total, invalidated, rendered }` (`rendered` is the model-facing text; with `staleAfterDays` set, stale entries carry a `[stale: ...]` annotation).
 
 ### `memory_update`
 
 | Arg | Required | Description |
 |---|---|---|
 | `key` | yes | Preference key, e.g. `language`, `communication-style` |
-| `value` | yes | Preference content |
-| `mode` | no | `set` (default, replace) / `append` (add a line) / `remove` (delete the key) |
+| `value` | yes | Preference content (`""` is fine for `invalidate` / `remove`) |
+| `mode` | no | `set` (default, replace/revive) / `append` (add a line) / `remove` (hard delete) / `invalidate` (soft invalidate) |
+| `reason` | no | For `mode=invalidate`: why the memory is no longer correct; stored with the entry for audit |
 
-Returns `{ ok, key, mode, bytes, error? }`.
+Returns `{ ok, key, mode, bytes, error? }`. **Soft-invalidation semantics**: an invalidated entry stays in the file (auditable), leaves the prompt, and is hidden from `memory_get` by default (pass `includeStale: true` to retrieve it); calling `set` / `append` on the same key revives it.
 
 ---
 
@@ -215,7 +219,7 @@ Returns `{ ok, key, mode, bytes, error? }`.
 
 ```sh
 pnpm install
-pnpm test           # 27/27: unit + storage integration + harness integration + full AgentLoop test (green on both the 0.1.7-alpha.1 and 0.2.0-rc.2 dependency lines)
+pnpm test           # 38/38: unit + storage integration + harness integration + full AgentLoop test
 pnpm run build       # tsc → lib/
 ```
 
@@ -231,7 +235,7 @@ pnpm run build       # tsc → lib/
 
 The v2 roadmap follows the 2026-10 survey of memory architectures at OpenAI (Dreaming), Claude Code (layered auto-memory), Letta (sleep-time compute / filesystem benchmarks), Mem0, and Zep (bi-temporal invalidation):
 
-- **Temporal semantics**: soft invalidation (`invalidated-at`, history preserved, never deleted) + aging config, so memories "stay correct over time" (benchmarked against OpenAI's three axes: fact recall / preference adherence / temporal correctness)
+- ✅ **Temporal semantics** (implemented in 0.2.0): soft invalidation (`mode=invalidate` + `reason`, history preserved, never deleted) + aging config `staleAfterDays` + `memory_get(includeStale)` audit, so memories "stay correct over time" (benchmarked against OpenAI's three axes: fact recall / preference adherence / temporal correctness)
 - **Memory layering**: global profile (existing) + per-workspace memory (index + topic files, lazy-loaded, mirroring Claude Code auto-memory)
 - **`memory_search`**: file-based search first (keyword + scoring); embedding recall only as an option past ~500 entries (Letta benchmark: plain file search already beats Mem0's graph approach at personal scale)
 - **Background consolidation ("dreaming")**: triggered on session idle / compaction / schedule; a background LLM pass extracts, merges, rewrites time (future → past), and invalidates, writing an auditable consolidation log

@@ -8,6 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Context } from '@deepseek-ai/cordis';
@@ -38,15 +39,32 @@ async function mountProfile(
   file: string,
   includeInPrompt = true,
   promptMaxBytes = 2048,
+  staleAfterDays = 0,
 ): Promise<void> {
-  await ctx.plugin(ToolUserMemory, { path: file, maxBytes: 8192, promptMaxBytes, includeInPrompt });
+  await ctx.plugin(ToolUserMemory, {
+    path: file,
+    maxBytes: 8192,
+    promptMaxBytes,
+    includeInPrompt,
+    staleAfterDays,
+  });
 }
 
-async function runUpdate(ctx: Context, n: number, key: string, value: string, mode?: string) {
+async function runUpdate(
+  ctx: Context,
+  n: number,
+  key: string,
+  value: string,
+  mode?: string,
+  reason?: string,
+) {
+  const toolArgs: Record<string, string> = { key, value };
+  if (mode !== undefined) toolArgs.mode = mode;
+  if (reason !== undefined) toolArgs.reason = reason;
   return ctx.tools.execute({
     callId: callId(n),
     name: 'memory_update',
-    arguments: mode === undefined ? { key, value } : { key, value, mode },
+    arguments: toolArgs,
     signal: new AbortController().signal,
   });
 }
@@ -173,6 +191,61 @@ test('harness: prompt injection is budget-capped, newest entries first', async (
     assert.ok(rendered.includes('## newer'));
     assert.ok(!rendered.includes('## older'));
     assert.ok(rendered.includes('memory_get')); // note points at the full profile
+  } finally {
+    await disposeCtx(ctx);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('harness: invalidated entries leave the prompt but stay auditable via includeStale', async () => {
+  const { dir, file } = tempProfile();
+  const ctx = new Context();
+  try {
+    await mountAgentLoopTestDependencies(ctx);
+    await mountProfile(ctx, file);
+    await runUpdate(ctx, 10, 'project', 'rag-service', 'set');
+    await runUpdate(ctx, 11, 'project', '', 'invalidate', 'superseded by agent-platform');
+    const rendered = renderPrompt(await ctx.systemPrompt.assemble());
+    assert.ok(!rendered.includes('rag-service'), 'invalidated value hidden from prompt');
+    const hidden = await ctx.tools.execute({
+      callId: callId(12),
+      name: 'memory_get',
+      arguments: {},
+      signal: new AbortController().signal,
+    });
+    const hv = hidden.value as { rendered?: string; invalidated?: number };
+    assert.equal(hv.invalidated, 1);
+    assert.ok(!hv.rendered?.includes('rag-service'), 'hidden from memory_get by default');
+    const shown = await ctx.tools.execute({
+      callId: callId(13),
+      name: 'memory_get',
+      arguments: { includeStale: true },
+      signal: new AbortController().signal,
+    });
+    const sv = shown.value as { rendered?: string };
+    assert.ok(sv.rendered?.includes('rag-service'), 'includeStale returns the entry');
+    assert.ok(sv.rendered?.includes('[invalidated'), 'entry is clearly marked');
+    assert.ok(sv.rendered?.includes('superseded by agent-platform'), 'reason is shown');
+    await runUpdate(ctx, 14, 'project', 'agent-platform', 'set');
+    const rendered2 = renderPrompt(await ctx.systemPrompt.assemble());
+    assert.ok(rendered2.includes('agent-platform'), 'set revives the entry into the prompt');
+  } finally {
+    await disposeCtx(ctx);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('harness: staleAfterDays annotates old entries in the prompt', async () => {
+  const { dir, file } = tempProfile();
+  const ctx = new Context();
+  try {
+    await mountAgentLoopTestDependencies(ctx);
+    await mountProfile(ctx, file, true, 2048, 30);
+    const oldTs = new Date(Date.now() - 60 * 86_400_000).toISOString();
+    await writeFile(file, `# User Memory\n\n## old-fact\n<!-- ts: ${oldTs} -->\nmaybe still true\n`, 'utf8');
+    const rendered = renderPrompt(await ctx.systemPrompt.assemble());
+    assert.ok(rendered.includes('## old-fact [stale: last updated 60d ago]'));
+    assert.ok(rendered.includes('maybe still true'));
   } finally {
     await disposeCtx(ctx);
     rmSync(dir, { recursive: true, force: true });

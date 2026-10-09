@@ -38,6 +38,13 @@ export const Config = z.object({
     .boolean()
     .default(true)
     .description("Inject the user profile into every session's system prompt"),
+  staleAfterDays: z
+    .number()
+    .min(0)
+    .default(0)
+    .description(
+      'Entries not updated within N days are annotated [stale] in the prompt and memory_get (annotation only, never a deletion); 0 disables aging',
+    ),
 });
 
 /** Validated config shape (schemastery has no z.infer; kept structural). */
@@ -46,6 +53,7 @@ export interface UserMemoryConfig {
   maxBytes: number;
   promptMaxBytes: number;
   includeInPrompt: boolean;
+  staleAfterDays: number;
 }
 
 export function apply(ctx: Context, config: UserMemoryConfig): void {
@@ -55,6 +63,7 @@ export function apply(ctx: Context, config: UserMemoryConfig): void {
     store,
     config.includeInPrompt !== false,
     config.promptMaxBytes ?? DEFAULT_PROMPT_MAX_BYTES,
+    config.staleAfterDays ?? 0,
   );
-  registerMemoryTools(ctx, store);
+  registerMemoryTools(ctx, store, config.staleAfterDays ?? 0);
 }

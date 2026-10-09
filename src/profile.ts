@@ -7,13 +7,19 @@
  *
  *   ## <key>
  *   <!-- ts: <ISO 8601> -->
+ *   <!-- invalid: <ISO 8601> | <reason> -->   (optional: soft-invalidation)
  *   <value lines>
  *
  * A value line whose first character is `#`, `\`, or `<` is written with a
  * leading `\` escape, so a value can never be misread as a `## <key>` heading
- * or an `<!-- ts:` metadata line. `parseProfile` / `serializeProfile` round-trip
- * exactly. Every mutation goes through `mergeEntry`, so behaviour is
- * unit-testable without a host.
+ * or an `<!-- ts:` / `<!-- invalid:` metadata line. `parseProfile` /
+ * `serializeProfile` round-trip exactly. Every mutation goes through
+ * `mergeEntry`, so behaviour is unit-testable without a host.
+ *
+ * Temporal semantics: `invalidate` soft-deletes an entry (value kept for
+ * audit, hidden from the prompt and from `memory_get` unless asked);
+ * `set`/`append` on an invalidated key revives it. `isStale` flags entries
+ * not updated within a configured number of days (annotation only).
  */
 
 export interface ProfileEntry {
@@ -21,16 +27,23 @@ export interface ProfileEntry {
   value: string;
   /** ISO 8601 timestamp of the last update; '' for hand-edited entries (treated as oldest). */
   updatedAt: string;
+  /** ISO 8601 timestamp when the entry was invalidated; '' = still valid. */
+  invalidatedAt: string;
+  /** Why the entry was invalidated ('' when valid, or when no reason was given). */
+  invalidReason: string;
 }
 
-export type MergeMode = 'set' | 'append' | 'remove';
+export type MergeMode = 'set' | 'append' | 'remove' | 'invalidate';
 
 /** Keys managed by the plugin itself; tools must reject writes to them. */
 export const RESERVED_KEYS: ReadonlySet<string> = new Set(['updated-at']);
 
 const TS_PREFIX = '<!-- ts: ';
 const TS_SUFFIX = ' -->';
+const INVALID_PREFIX = '<!-- invalid: ';
+const INVALID_SUFFIX = ' -->';
 const ESCAPE_FIRST: ReadonlySet<string> = new Set(['#', '\\', '<']);
+const REASON_MAX_CHARS = 200;
 
 /** Validate a user-supplied key (already trimmed) before writing it. */
 export function validateKey(key: string): string | null {
@@ -56,7 +69,7 @@ export function parseProfile(doc: string): ProfileEntry[] {
     const heading = /^##\s+(.+?)\s*$/.exec(rawLine);
     if (heading) {
       if (current) entries.push(current);
-      current = { key: heading[1]!.trim(), value: '', updatedAt: '' };
+      current = { key: heading[1]!.trim(), value: '', updatedAt: '', invalidatedAt: '', invalidReason: '' };
     } else if (current) {
       if (rawLine.startsWith('\\')) {
         current.value += (current.value === '' ? '' : '\n') + unescapeLine(rawLine);
@@ -66,6 +79,15 @@ export function parseProfile(doc: string): ProfileEntry[] {
         current.updatedAt === ''
       ) {
         current.updatedAt = rawLine.slice(TS_PREFIX.length, rawLine.length - TS_SUFFIX.length);
+      } else if (
+        rawLine.startsWith(INVALID_PREFIX) &&
+        rawLine.endsWith(INVALID_SUFFIX) &&
+        current.invalidatedAt === ''
+      ) {
+        const payload = rawLine.slice(INVALID_PREFIX.length, rawLine.length - INVALID_SUFFIX.length);
+        const sep = payload.indexOf('|');
+        current.invalidatedAt = (sep >= 0 ? payload.slice(0, sep) : payload).trim();
+        current.invalidReason = sep >= 0 ? payload.slice(sep + 1).trim() : '';
       } else if (rawLine.trim() !== '') {
         current.value += (current.value === '' ? '' : '\n') + rawLine.trimStart();
       }
@@ -78,13 +100,23 @@ export function parseProfile(doc: string): ProfileEntry[] {
 /** Serialize entries back into the canonical document (reserved keys dropped). */
 export function serializeProfile(entries: ProfileEntry[]): string {
   const lines = ['# User Memory'];
-  for (const { key, value, updatedAt } of entries) {
+  for (const { key, value, updatedAt, invalidatedAt, invalidReason } of entries) {
     if (key === '' || RESERVED_KEYS.has(key)) continue;
     lines.push('', `## ${key}`);
     if (updatedAt !== '') lines.push(`${TS_PREFIX}${updatedAt}${TS_SUFFIX}`);
+    if (invalidatedAt) {
+      lines.push(
+        `${INVALID_PREFIX}${invalidatedAt}${invalidReason ? ` | ${invalidReason}` : ''}${INVALID_SUFFIX}`,
+      );
+    }
     if (value !== '') lines.push(...value.split(/\r?\n/).map(escapeLine));
   }
   return lines.join('\n') + '\n';
+}
+
+/** Sanitize an invalidation reason: first line, trimmed, length-capped. */
+function sanitizeReason(reason: string): string {
+  return reason.split(/\r?\n/)[0]!.trim().slice(0, REASON_MAX_CHARS);
 }
 
 /** Apply one update to an entry list, returning a new list (immutable). */
@@ -94,17 +126,40 @@ export function mergeEntry(
   value: string,
   mode: MergeMode,
   now: string,
+  invalidateReason = '',
 ): ProfileEntry[] {
   const trimmedKey = key.trim();
   const error = validateKey(trimmedKey);
   if (error) throw new Error(`memory_update: ${error}`);
   const index = entries.findIndex((entry) => entry.key === trimmedKey);
   if (mode === 'remove') return entries.filter((entry) => entry.key !== trimmedKey);
+  if (mode === 'invalidate') {
+    if (index < 0) {
+      throw new Error(`memory_update: cannot invalidate unknown key '${trimmedKey}'`);
+    }
+    const target = entries[index]!;
+    const updated: ProfileEntry = {
+      ...target,
+      invalidatedAt: now,
+      invalidReason: sanitizeReason(invalidateReason),
+    };
+    const copy = entries.slice();
+    copy[index] = updated;
+    return copy;
+  }
+  const existing = index >= 0 ? entries[index]! : null;
   const mergedValue =
-    mode === 'append' && index >= 0 && entries[index]!.value !== ''
-      ? `${entries[index]!.value}\n${value}`
+    mode === 'append' && existing !== null && existing.value !== ''
+      ? `${existing.value}\n${value}`
       : value;
-  const updated: ProfileEntry = { key: trimmedKey, value: mergedValue, updatedAt: now };
+  // set/append revalidate the key: any previous invalidation is cleared.
+  const updated: ProfileEntry = {
+    key: trimmedKey,
+    value: mergedValue,
+    updatedAt: now,
+    invalidatedAt: '',
+    invalidReason: '',
+  };
   if (index >= 0) {
     const copy = entries.slice();
     copy[index] = updated;
@@ -126,13 +181,47 @@ export function orderByRecency(entries: ProfileEntry[]): ProfileEntry[] {
     .map(({ entry }) => entry);
 }
 
+/** Options for freshness-aware rendering (all optional; defaults = no annotation). */
+export interface RenderOptions {
+  /** ISO "now" used for age math; defaults to the real current time. */
+  now?: string;
+  /** When > 0, entries not updated within this many days get a [stale] annotation. */
+  staleAfterDays?: number;
+}
+
+const DAY_MS = 86_400_000;
+
+/** True when the entry is valid but not updated within `staleAfterDays` days. */
+export function isStale(entry: ProfileEntry, now: string, staleAfterDays: number): boolean {
+  if (staleAfterDays <= 0) return false;
+  const baseMs = Date.parse(entry.updatedAt);
+  const nowMs = Date.parse(now);
+  if (Number.isNaN(baseMs) || Number.isNaN(nowMs)) return false;
+  return nowMs - baseMs > staleAfterDays * DAY_MS;
+}
+
+function entryHeading(entry: ProfileEntry, now: string, staleAfterDays: number): string {
+  if (entry.invalidatedAt) {
+    const stamp = entry.invalidatedAt.slice(0, 10);
+    const reason = (entry.invalidReason ?? '').trim();
+    return `## ${entry.key} [invalidated ${stamp}${reason !== '' ? `: ${reason}` : ''}]`;
+  }
+  if (staleAfterDays > 0 && isStale(entry, now, staleAfterDays)) {
+    const ageDays = Math.floor((Date.parse(now) - Date.parse(entry.updatedAt)) / DAY_MS);
+    return `## ${entry.key} [stale: last updated ${ageDays}d ago]`;
+  }
+  return `## ${entry.key}`;
+}
+
 /** Render entries as model-facing markdown (reserved keys excluded). */
-export function renderEntries(entries: ProfileEntry[]): string {
+export function renderEntries(entries: ProfileEntry[], options: RenderOptions = {}): string {
   if (entries.length === 0) return '';
+  const now = options.now ?? new Date().toISOString();
+  const staleAfterDays = options.staleAfterDays ?? 0;
   const lines: string[] = [];
-  for (const { key, value } of entries) {
-    if (RESERVED_KEYS.has(key)) continue;
-    lines.push(`## ${key}`, value === '' ? '(empty)' : value, '');
+  for (const entry of entries) {
+    if (RESERVED_KEYS.has(entry.key)) continue;
+    lines.push(entryHeading(entry, now, staleAfterDays), entry.value === '' ? '(empty)' : entry.value, '');
   }
   return lines.join('\n').trimEnd();
 }
@@ -146,18 +235,19 @@ export function renderEntries(entries: ProfileEntry[]): string {
 export function renderEntriesBudgeted(
   entries: ProfileEntry[],
   maxBytes: number,
+  options: RenderOptions = {},
 ): { text: string; omitted: number } {
   const ordered = orderByRecency(entries.filter((entry) => !RESERVED_KEYS.has(entry.key)));
   if (ordered.length === 0) return { text: '', omitted: 0 };
   const out: ProfileEntry[] = [ordered[0]!];
   for (let i = 1; i < ordered.length; i += 1) {
     out.push(ordered[i]!);
-    if (byteLength(renderEntries(out)) > maxBytes) {
+    if (byteLength(renderEntries(out, options)) > maxBytes) {
       out.pop();
       break;
     }
   }
-  return { text: renderEntries(out), omitted: ordered.length - out.length };
+  return { text: renderEntries(out, options), omitted: ordered.length - out.length };
 }
 
 export interface Eviction {
@@ -179,9 +269,19 @@ export function evictToBudget(entries: ProfileEntry[], budgetBytes: number): Evi
   let truncated: string | null = null;
 
   while (byteLength(serializeProfile(kept)) > budgetBytes && kept.length > 1) {
+    // Invalidated entries are dead weight: evict them before any live entry,
+    // then by oldest updatedAt.
     let oldest = 0;
     for (let i = 1; i < kept.length; i += 1) {
-      if (kept[i]!.updatedAt < kept[oldest]!.updatedAt) oldest = i;
+      const candidate = kept[i]!;
+      const incumbent = kept[oldest]!;
+      const candidateDead = candidate.invalidatedAt !== '';
+      const incumbentDead = incumbent.invalidatedAt !== '';
+      if (candidateDead !== incumbentDead) {
+        if (candidateDead) oldest = i;
+      } else if (candidate.updatedAt < incumbent.updatedAt) {
+        oldest = i;
+      }
     }
     evicted.push(kept[oldest]!.key);
     kept = kept.filter((_, i) => i !== oldest);

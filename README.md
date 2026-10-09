@@ -25,7 +25,7 @@
 
 | 能力 | 说明 |
 |---|---|
-| `memory_update(key, value, mode?)` | agent 学到你的稳定偏好时，自动记录 / 追加 / 删除 |
+| `memory_update(key, value, mode?, reason?)` | agent 学到你的稳定偏好时，自动记录 / 追加 / 软失效 / 删除 |
 | `memory_get(query?, limit?)` | 需要个性化回答时，主动读取你的画像 |
 | `{{user_profile}}` 系统提示词注入 | **每个会话每轮自动携带**你的画像（空画像零 token 成本） |
 | 持久化存储 | `$DSH_HOME/user-memory/user.md`，人类可读、可手改、可删除 |
@@ -88,6 +88,7 @@ dsh plugin --profile web add ./dsh-tool-user-memory-0.2.0.tgz
 | `maxBytes` | `8192` | 画像文件体积上限；超限时按最旧优先逐条淘汰 |
 | `promptMaxBytes` | `2048` | 每轮系统提示词注入的字节预算（新近优先）；设为 `0` 注入完整画像 |
 | `includeInPrompt` | `true` | 是否在每个会话的系统提示词中注入画像 |
+| `staleAfterDays` | `0` | N 天未更新的条目带 `[stale: last updated Nd ago]` 标注（仅标注、绝不删除）；`0` = 关闭 |
 
 ---
 
@@ -139,7 +140,8 @@ dsh plugin --profile web add ./dsh-tool-user-memory-0.2.0.tgz
 
 ### 场景 C：修改 / 忘记
 
-> "忘掉我对 XX 的偏好"（agent 调用 `memory_update mode=remove`）
+> "忘掉我对 XX 的偏好"（agent 调用 `memory_update mode=remove`，硬删除）
+> "我那个 XX 项目已经换成 YY 了"（agent 调用 `memory_update mode=invalidate` + `reason`：软失效，历史保留但不再影响行为）
 
 也可以**手动编辑**画像文件（`$DSH_HOME/user-memory/user.md`）——它是普通 Markdown，
 改完即生效，**删掉文件 = 彻底失忆**：
@@ -182,18 +184,20 @@ dsh plugin --profile web add ./dsh-tool-user-memory-0.2.0.tgz
 |---|---|---|
 | `query` | 否 | 关键词，按 key 或 value 过滤 |
 | `limit` | 否 | 最多返回条数（默认 50，上限 100） |
+| `includeStale` | 否 | `true` = 连失效条目一起返回（带失效时间 + 原因标记），用于审计 |
 
-返回 `{ ok, total, rendered }`（`rendered` 为模型可见的渲染文本）。
+返回 `{ ok, total, invalidated, rendered }`（`rendered` 为模型可见的渲染文本；开启 `staleAfterDays` 时 stale 条目带 `[stale: ...]` 标注）。
 
 ### `memory_update`
 
 | 参数 | 必填 | 说明 |
 |---|---|---|
 | `key` | 是 | 偏好键，如 `language`、`communication-style` |
-| `value` | 是 | 偏好内容 |
-| `mode` | 否 | `set`（默认，覆盖）/ `append`（追加一行）/ `remove`（删除该键） |
+| `value` | 是 | 偏好内容（`invalidate` / `remove` 时可为 `""`） |
+| `mode` | 否 | `set`（默认，覆盖/复活）/ `append`（追加一行）/ `remove`（硬删除）/ `invalidate`（软失效） |
+| `reason` | 否 | `mode=invalidate` 时：为什么这条记忆不再成立，随条目存档供审计 |
 
-返回 `{ ok, key, mode, bytes, error? }`。
+返回 `{ ok, key, mode, bytes, error? }`。**软失效语义**：失效条目保留在文件里（可审计），不再注入提示词，`memory_get` 默认隐藏（`includeStale: true` 可查回）；对同一 key 再次 `set` / `append` 会复活它。
 
 ---
 
@@ -201,7 +205,7 @@ dsh plugin --profile web add ./dsh-tool-user-memory-0.2.0.tgz
 
 ```sh
 pnpm install
-pnpm test           # 27/27：单测 + 存储集成 + harness 集成 + 完整 AgentLoop 循环级测试（0.1.7-alpha.1 与 0.2.0-rc.2 双线全绿）
+pnpm test           # 38/38：单测 + 存储集成 + harness 集成 + 完整 AgentLoop 循环级测试
 pnpm run build       # tsc → lib/
 ```
 
@@ -214,7 +218,7 @@ pnpm run build       # tsc → lib/
 
 v2 路线基于 2026-10 对 OpenAI（Dreaming）、Claude Code（自动记忆分层）、Letta（sleep-time compute / 文件系统基准）、Mem0、Zep（双时态失效）等记忆架构的调研结论：
 
-- **时间语义**：软失效（`invalidated-at`，保留历史不删除）+ 老化配置，让记忆「随时间保持正确」（对照 OpenAI 三轴：事实回忆 / 偏好遵循 / 时间正确）
+- ✅ **时间语义**（0.2.0 已实现）：软失效（`mode=invalidate` + `reason`，保留历史不删除）+ 老化配置 `staleAfterDays` + `memory_get(includeStale)` 审计，让记忆「随时间保持正确」（对照 OpenAI 三轴：事实回忆 / 偏好遵循 / 时间正确）
 - **记忆分层**：全局画像（现有）+ 工作区级记忆（索引 + 主题文件，懒加载，对齐 Claude Code auto-memory 结构）
 - **`memory_search`**：文件检索优先（关键词 + 评分）；向量召回仅在条目 > ~500 时作为可选项（Letta 基准：个人规模下纯文件检索已超过 Mem0 图方案）
 - **后台巩固（"dreaming"）**：会话空闲 / compaction / 定时触发，后台 LLM 提取、合并、时间改写（「要去」→「去过」）、失效，产出可审计的 consolidation log

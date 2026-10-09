@@ -53,7 +53,7 @@ export interface MemoryStore {
   list(): Promise<ProfileEntry[]>;
   /** Sync variant used by the system-prompt variable provider. */
   listSync(): ProfileEntry[];
-  update(key: string, value: string, mode: MergeMode): Promise<UpdateResult>;
+  update(key: string, value: string, mode: MergeMode, invalidateReason?: string): Promise<UpdateResult>;
 }
 
 export function resolveProfilePath(override?: string): string {
@@ -110,7 +110,12 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
     return parseDoc(readSync());
   }
 
-  async function update(key: string, value: string, mode: MergeMode): Promise<UpdateResult> {
+  async function update(
+    key: string,
+    value: string,
+    mode: MergeMode,
+    invalidateReason = '',
+  ): Promise<UpdateResult> {
     const trimmedKey = key.trim();
     const keyError = validateKey(trimmedKey);
     if (keyError) {
@@ -128,8 +133,19 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
       };
     }
     const now = new Date().toISOString();
-    const doc = await read();
-    const merged = mergeEntry(parseDoc(doc), trimmedKey, value, mode, now);
+    const current = parseDoc(await read());
+    if (mode === 'invalidate' && !current.some((entry) => entry.key === trimmedKey)) {
+      return {
+        ok: false,
+        key: trimmedKey,
+        mode,
+        bytes: 0,
+        evicted: [],
+        truncated: null,
+        error: `key '${trimmedKey}' does not exist — nothing to invalidate`,
+      };
+    }
+    const merged = mergeEntry(current, trimmedKey, value, mode, now, invalidateReason);
     const stamp = `\n## updated-at\n${now}\n`;
     const budget = maxBytes - Buffer.byteLength(stamp, 'utf8');
     const { kept, evicted, truncated } = evictToBudget(merged, budget);

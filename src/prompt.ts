@@ -21,16 +21,20 @@ export function registerProfilePrompt(
   store: MemoryStore,
   includeInPrompt: boolean,
   promptMaxBytes: number,
+  staleAfterDays = 0,
 ): void {
   if (!includeInPrompt) return;
 
   ctx.systemPrompt.variable('user_profile', () => {
-    const entries = store.listSync();
+    const now = new Date().toISOString();
+    // Invalidated entries stay in the file but never enter the prompt.
+    const entries = store.listSync().filter((entry) => !entry.invalidatedAt);
     if (entries.length === 0) return '';
+    const options = { now, staleAfterDays };
     const { text, omitted } =
       promptMaxBytes > 0
-        ? renderEntriesBudgeted(entries, promptMaxBytes)
-        : { text: renderEntries(entries), omitted: 0 };
+        ? renderEntriesBudgeted(entries, promptMaxBytes, options)
+        : { text: renderEntries(entries, options), omitted: 0 };
     if (text === '') return '';
 
     const parts = [

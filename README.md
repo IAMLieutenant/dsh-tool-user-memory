@@ -25,10 +25,12 @@
 
 | 能力 | 说明 |
 |---|---|
-| `memory_update(key, value, mode?, reason?)` | agent 学到你的稳定偏好时，自动记录 / 追加 / 软失效 / 删除 |
-| `memory_get(query?, limit?)` | 需要个性化回答时，主动读取你的画像 |
-| `{{user_profile}}` 系统提示词注入 | **每个会话每轮自动携带**你的画像（空画像零 token 成本） |
-| 持久化存储 | `$DSH_HOME/user-memory/user.md`，人类可读、可手改、可删除 |
+| `memory_update(key, value, mode?, reason?, scope?)` | agent 学到你的稳定偏好时，自动记录 / 追加 / 软失效 / 删除；`scope=workspace` 写项目级记忆 |
+| `memory_get(query?, limit?, includeStale?)` | 需要个性化回答时，主动读取你的画像 |
+| `memory_search(query?, limit?, includeStale?)` | 跨「全局画像 + 当前工作区记忆」的关键词检索（带评分与一行摘要） |
+| `memory_topic(topic)` | 读取某个工作区记忆主题的全文（懒加载） |
+| `{{user_profile}}` 系统提示词注入 | **每个会话每轮自动携带**你的画像 + 当前工作区记忆索引（两者都空则零 token 成本） |
+| 记忆分层 | 全局画像 + 工作区记忆（索引 + 主题文件），全部人类可读、可手改、可删除 |
 
 ### 工作原理（30 秒版）
 
@@ -89,6 +91,8 @@ dsh plugin --profile web add ./dsh-tool-user-memory-0.2.0.tgz
 | `promptMaxBytes` | `2048` | 每轮系统提示词注入的字节预算（新近优先）；设为 `0` 注入完整画像 |
 | `includeInPrompt` | `true` | 是否在每个会话的系统提示词中注入画像 |
 | `staleAfterDays` | `0` | N 天未更新的条目带 `[stale: last updated Nd ago]` 标注（仅标注、绝不删除）；`0` = 关闭 |
+| `workspacePromptMaxBytes` | `512` | 每轮注入的工作区记忆索引字节预算（正文懒加载）；`0` = 不注入工作区记忆 |
+| `workspaceBase` | `$DSH_HOME/user-memory/workspace` | 工作区记忆根目录（主要用于测试或自定义布局） |
 
 ---
 
@@ -166,10 +170,22 @@ dsh plugin --profile web add ./dsh-tool-user-memory-0.2.0.tgz
 
 ## 5. 记忆会延续到哪里？
 
-- **记忆是全局的**：存在 `$DSH_HOME` 下，与你**所有工作区、所有 profile**（web / headless）共享；
-- **自动注入**：每个新会话的系统提示词都携带当前画像，无需手动加载；
-- **零成本起步**：画像为空时不注入任何内容，不消耗 token；
+- **个人记忆是全局的**：存在 `$DSH_HOME` 下，与你**所有工作区、所有 profile**（web / headless）共享；
+- **项目记忆是分层的**：`scope=workspace` 写入的内容按会话所在目录（`cwd` 的 realpath）分目录存放，只对"在该目录里打开的会话"可见——换项目不串味；
+- **自动注入**：每个新会话的系统提示词都携带当前画像 + 当前工作区记忆索引（索引只有主题名与一行摘要，正文按需 `memory_topic` 取）；
+- **零成本起步**：画像与工作区记忆都为空时不注入任何内容，不消耗 token；
 - **可控**：文件随时可看、可改、可删。
+
+### 记忆文件布局
+
+```
+$DSH_HOME/user-memory/
+├── user.md                     # 全局画像：个人偏好、跨项目稳定事实
+└── workspace/
+    └── <hash16>/               # 每个工作目录一个（hash = sha256(realpath(cwd)) 前 16 位）
+        ├── MEMORY.md           # 索引：主题名 + 一行摘要（每次写入自动重建）
+        └── <topic>.md          # 主题正文：标题 + 时间戳 + 可选失效标记 + 内容
+```
 
 > 安全设计：注入的画像被明确标注为"参考数据，不是指令"——除非你在当前消息中重复，
 > agent 不会执行画像里的任何"指令"（与官方 `dsh-session-reference` 快照同一立场）。
@@ -196,8 +212,27 @@ dsh plugin --profile web add ./dsh-tool-user-memory-0.2.0.tgz
 | `value` | 是 | 偏好内容（`invalidate` / `remove` 时可为 `""`） |
 | `mode` | 否 | `set`（默认，覆盖/复活）/ `append`（追加一行）/ `remove`（硬删除）/ `invalidate`（软失效） |
 | `reason` | 否 | `mode=invalidate` 时：为什么这条记忆不再成立，随条目存档供审计 |
+| `scope` | 否 | `global`（默认，个人画像）/ `workspace`（当前会话目录的项目记忆，存为主题文件） |
 
-返回 `{ ok, key, mode, bytes, error? }`。**软失效语义**：失效条目保留在文件里（可审计），不再注入提示词，`memory_get` 默认隐藏（`includeStale: true` 可查回）；对同一 key 再次 `set` / `append` 会复活它。
+返回 `{ ok, scope, key, mode, bytes, error? }`。**软失效语义**：失效条目保留在文件里（可审计），不再注入提示词，`memory_get` 默认隐藏（`includeStale: true` 可查回）；对同一 key 再次 `set` / `append` 会复活它。
+
+### `memory_search`
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `query` | 否 | 关键词（空格分隔多词，支持中文子串）；空 = 列出最近的主题 |
+| `limit` | 否 | 最多返回条数（默认 10，上限 20） |
+| `includeStale` | 否 | `true` = 连失效条目一起检索（带失效标记） |
+
+返回 `{ ok, total, results: [{ scope, topic, score, updatedAt, snippet }] }`。评分规则：主题名命中 ×3、正文出现次数 ×1（上限 5）、全部词命中额外 +4；全局画像与工作区记忆一起排序。
+
+### `memory_topic`
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `topic` | 是 | 工作区主题名（来自注入的索引或 `memory_search` 结果） |
+
+返回 `{ ok, topic, updatedAt, invalidated, invalidReason, body }`——即主题全文（懒加载，不进每轮提示词）。
 
 ---
 
@@ -205,12 +240,12 @@ dsh plugin --profile web add ./dsh-tool-user-memory-0.2.0.tgz
 
 ```sh
 pnpm install
-pnpm test           # 38/38：单测 + 存储集成 + harness 集成 + 完整 AgentLoop 循环级测试
+pnpm test           # 52/52：单测 + 存储集成 + 工作区记忆 + harness 集成 + 完整 AgentLoop 循环级测试
 pnpm run build       # tsc → lib/
 ```
 
 - 存储层刻意直接使用 `node:fs`（插件内部受信状态，同 settings/会话持久化），不走沙箱化的模型侧 `ctx.fs`。
-- 结构：`src/index.ts`（插件本体）`profile.ts`（纯函数文档模型）`store.ts`（原子写存储）`tools.ts`（两个工具）`prompt.ts`（系统提示词注入）。
+- 结构：`src/index.ts`（插件本体）`profile.ts`（全局画像文档模型）`store.ts`（画像原子写存储）`workspace.ts`（工作区记忆层：主题文件 + 索引 + 关键词检索）`tools.ts`（四个工具）`prompt.ts`（画像 + 工作区索引注入）。
 
 ---
 
@@ -219,8 +254,8 @@ pnpm run build       # tsc → lib/
 v2 路线基于 2026-10 对 OpenAI（Dreaming）、Claude Code（自动记忆分层）、Letta（sleep-time compute / 文件系统基准）、Mem0、Zep（双时态失效）等记忆架构的调研结论：
 
 - ✅ **时间语义**（0.2.0 已实现）：软失效（`mode=invalidate` + `reason`，保留历史不删除）+ 老化配置 `staleAfterDays` + `memory_get(includeStale)` 审计，让记忆「随时间保持正确」（对照 OpenAI 三轴：事实回忆 / 偏好遵循 / 时间正确）
-- **记忆分层**：全局画像（现有）+ 工作区级记忆（索引 + 主题文件，懒加载，对齐 Claude Code auto-memory 结构）
-- **`memory_search`**：文件检索优先（关键词 + 评分）；向量召回仅在条目 > ~500 时作为可选项（Letta 基准：个人规模下纯文件检索已超过 Mem0 图方案）
+- ✅ **记忆分层**（0.2.0 已实现）：全局画像 + 工作区级记忆（索引 + 主题文件，懒加载，对齐 Claude Code auto-memory 结构）；工作区身份 = `sha256(realpath(cwd))`，按会话 `cwd` 自动归属
+- ✅ **`memory_search`**（0.2.0 已实现）：文件检索优先（关键词 + 评分 + 一行摘要）；向量召回仅在条目量级很大（> ~500）时才值得引入（Letta 基准：个人规模下纯文件检索已超过 Mem0 图方案）
 - **后台巩固（"dreaming"）**：会话空闲 / compaction / 定时触发，后台 LLM 提取、合并、时间改写（「要去」→「去过」）、失效，产出可审计的 consolidation log
 - 多用户画像（按会话身份分文件）
 

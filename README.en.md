@@ -31,10 +31,12 @@ This plugin gives the agent a **persisted user profile**:
 
 | Capability | Description |
 |---|---|
-| `memory_update(key, value, mode?, reason?)` | The agent records / appends / soft-invalidates / removes a stable preference it just learned |
-| `memory_get(query?, limit?)` | The agent reads your profile when personalisation matters |
-| `{{user_profile}}` system-prompt injection | **Every turn of every session** carries your profile (zero token cost while empty) |
-| Durable storage | `$DSH_HOME/user-memory/user.md` — human-readable, editable, deletable |
+| `memory_update(key, value, mode?, reason?, scope?)` | The agent records / appends / soft-invalidates / removes a stable preference it just learned; `scope=workspace` writes project memory |
+| `memory_get(query?, limit?, includeStale?)` | The agent reads your profile when personalisation matters |
+| `memory_search(query?, limit?, includeStale?)` | Keyword search across the global profile **and** the current workspace's memory (scored, with one-line snippets) |
+| `memory_topic(topic)` | Reads one workspace memory topic in full (lazy load) |
+| `{{user_profile}}` system-prompt injection | **Every turn of every session** carries your profile plus the current workspace memory index (zero token cost while both are empty) |
+| Layered memory | Global profile + per-workspace memory (index + topic files) — all human-readable, editable, deletable |
 
 ### How it works (30 seconds)
 
@@ -98,6 +100,8 @@ profile's `cordis.patch.yml`:
 | `promptMaxBytes` | `2048` | Per-turn injection byte budget (newest first); `0` injects the full profile |
 | `includeInPrompt` | `true` | Inject the profile into every session's system prompt |
 | `staleAfterDays` | `0` | Entries not updated within N days get a `[stale: last updated Nd ago]` annotation (annotation only, never deleted); `0` = off |
+| `workspacePromptMaxBytes` | `512` | Per-turn byte budget for the injected workspace memory index (bodies stay lazy); `0` = no workspace injection |
+| `workspaceBase` | `$DSH_HOME/user-memory/workspace` | Workspace memory root directory (mainly for testing or custom layouts) |
 
 ---
 
@@ -177,12 +181,27 @@ Direct, minimal pleasantries
 
 ## 5. Where does the memory live?
 
-- **Global**: stored under `$DSH_HOME`, shared across **all workspaces and
-  profiles** (web / headless).
-- **Auto-injected**: every new session carries the current profile in its system
-  prompt; nothing to load manually.
-- **Zero-cost start**: nothing is injected while the profile is empty.
-- **Under your control**: the file can be viewed, edited, or deleted at any time.
+- **Personal memory is global**: stored under `$DSH_HOME`, shared across **all
+  workspaces and profiles** (web / headless).
+- **Project memory is layered**: `scope=workspace` writes go to a directory keyed
+  by the session's cwd (`sha256(realpath(cwd))`), visible only to sessions opened
+  in that directory — no bleed between projects.
+- **Auto-injected**: every new session carries the current profile plus the
+  current workspace memory index in its system prompt (the index holds topic names
+  and one-line summaries; bodies are fetched on demand with `memory_topic`).
+- **Zero-cost start**: nothing is injected while both are empty.
+- **Under your control**: the files can be viewed, edited, or deleted at any time.
+
+### Memory file layout
+
+```
+$DSH_HOME/user-memory/
+├── user.md                     # global profile: personal preferences, cross-project facts
+└── workspace/
+    └── <hash16>/               # one per working directory (sha256(realpath(cwd)), first 16 hex)
+        ├── MEMORY.md           # index: topic name + one-line summary (regenerated on every write)
+        └── <topic>.md          # topic body: title + timestamp + optional invalidation marker + content
+```
 
 > Security: the injected profile is framed as *reference data, not instructions*;
 > the agent must not follow directives inside it unless you repeat them in the
@@ -210,8 +229,27 @@ Returns `{ ok, total, invalidated, rendered }` (`rendered` is the model-facing t
 | `value` | yes | Preference content (`""` is fine for `invalidate` / `remove`) |
 | `mode` | no | `set` (default, replace/revive) / `append` (add a line) / `remove` (hard delete) / `invalidate` (soft invalidate) |
 | `reason` | no | For `mode=invalidate`: why the memory is no longer correct; stored with the entry for audit |
+| `scope` | no | `global` (default, personal profile) / `workspace` (project memory for the session's directory, stored as topic files) |
 
-Returns `{ ok, key, mode, bytes, error? }`. **Soft-invalidation semantics**: an invalidated entry stays in the file (auditable), leaves the prompt, and is hidden from `memory_get` by default (pass `includeStale: true` to retrieve it); calling `set` / `append` on the same key revives it.
+Returns `{ ok, scope, key, mode, bytes, error? }`. **Soft-invalidation semantics**: an invalidated entry stays in the file (auditable), leaves the prompt, and is hidden from `memory_get` by default (pass `includeStale: true` to retrieve it); calling `set` / `append` on the same key revives it.
+
+### `memory_search`
+
+| Arg | Required | Description |
+|---|---|---|
+| `query` | no | Keyword(s), space-separated (CJK substrings work); empty = list recent topics |
+| `limit` | no | Max results (default 10, max 20) |
+| `includeStale` | no | `true` = also search invalidated entries (marked) |
+
+Returns `{ ok, total, results: [{ scope, topic, score, updatedAt, snippet }] }`. Scoring: topic-name hit ×3, body occurrences ×1 (capped at 5), all terms matched +4; global and workspace hits are ranked together.
+
+### `memory_topic`
+
+| Arg | Required | Description |
+|---|---|---|
+| `topic` | yes | Workspace topic name (from the injected index or `memory_search` results) |
+
+Returns `{ ok, topic, updatedAt, invalidated, invalidReason, body }` — the full topic text (lazy-loaded; it never enters the per-turn prompt).
 
 ---
 
@@ -219,15 +257,16 @@ Returns `{ ok, key, mode, bytes, error? }`. **Soft-invalidation semantics**: an 
 
 ```sh
 pnpm install
-pnpm test           # 38/38: unit + storage integration + harness integration + full AgentLoop test
+pnpm test           # 52/52: unit + storage integration + workspace memory + harness integration + full AgentLoop test
 pnpm run build       # tsc → lib/
 ```
 
 - The storage layer deliberately uses `node:fs` directly (plugin-internal trusted
   state, like settings / session persistence), not the sandboxed model-facing
   `ctx.fs` seam.
-- Layout: `src/index.ts` (plugin) `profile.ts` (pure document model) `store.ts`
-  (atomic-write storage) `tools.ts` (the two tools) `prompt.ts` (system-prompt injection).
+- Layout: `src/index.ts` (plugin) `profile.ts` (profile document model) `store.ts`
+  (atomic-write profile store) `workspace.ts` (workspace memory: topic files + index
+  + keyword search) `tools.ts` (the four tools) `prompt.ts` (profile + workspace index injection).
 
 ---
 
@@ -236,8 +275,8 @@ pnpm run build       # tsc → lib/
 The v2 roadmap follows the 2026-10 survey of memory architectures at OpenAI (Dreaming), Claude Code (layered auto-memory), Letta (sleep-time compute / filesystem benchmarks), Mem0, and Zep (bi-temporal invalidation):
 
 - ✅ **Temporal semantics** (implemented in 0.2.0): soft invalidation (`mode=invalidate` + `reason`, history preserved, never deleted) + aging config `staleAfterDays` + `memory_get(includeStale)` audit, so memories "stay correct over time" (benchmarked against OpenAI's three axes: fact recall / preference adherence / temporal correctness)
-- **Memory layering**: global profile (existing) + per-workspace memory (index + topic files, lazy-loaded, mirroring Claude Code auto-memory)
-- **`memory_search`**: file-based search first (keyword + scoring); embedding recall only as an option past ~500 entries (Letta benchmark: plain file search already beats Mem0's graph approach at personal scale)
+- ✅ **Memory layering** (implemented in 0.2.0): global profile + per-workspace memory (index + topic files, lazy-loaded, mirroring Claude Code auto-memory); workspace identity = `sha256(realpath(cwd))`, resolved automatically from the session's cwd
+- ✅ **`memory_search`** (implemented in 0.2.0): file-based search first (keyword + scoring + one-line snippets); embedding recall only becomes worthwhile at a much larger scale (> ~500 entries; Letta benchmark: plain file search already beats Mem0's graph approach at personal scale)
 - **Background consolidation ("dreaming")**: triggered on session idle / compaction / schedule; a background LLM pass extracts, merges, rewrites time (future → past), and invalidates, writing an auditable consolidation log
 - Per-user profiles (keyed by session identity)
 

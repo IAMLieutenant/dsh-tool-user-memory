@@ -21,6 +21,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - **`staleAfterDays` 配置**（默认 `0` = 关闭）：N 天未更新的条目在提示词与 `memory_get` 中带 `[stale: last updated Nd ago]` 标注——仅标注、绝不自动删除；无时间戳的手写条目不判 stale。
   - **`memory_get(includeStale?)`**：`includeStale: true` 可取回失效条目（带失效时间 + 原因标记）用于审计"什么被取代了"；返回值新增 `invalidated` 计数。
   - **淘汰优先级**：超字节预算时失效条目最先被淘汰，为有效记忆让路。
+- **记忆分层（Phase 2）**：
+  - **工作区记忆层**：`memory_update(scope=workspace)` 把项目级知识（构建约定、架构、命令）写进按会话 `cwd` 定位的独立目录 `$DSH_HOME/user-memory/workspace/<sha256(realpath(cwd)) 前 16 位>/`，每个主题一个 Markdown 文件，并自动重建 `MEMORY.md` 索引（主题名 + 一行摘要）。工作区身份来自会话头部的 `cwd`，而非进程工作目录——同一个项目在任何 profile / 任何会话里共享，换项目自动隔离。
+  - **懒加载注入**：系统提示词只注入当前工作区记忆的**索引**（默认 512 字节预算，`workspacePromptMaxBytes`），正文用 `memory_topic` 按需取——大记忆不烧每轮 token。工作区解析走 `AssembleContext.agent`（官方 `assembleContextFor` 提供的装配上下文），没有 agent 的装配（诊断场景）不注入。
+  - **`memory_search(query?, limit?, includeStale?)`**：跨「全局画像 + 当前工作区记忆」的关键词检索——主题名命中 ×3、正文出现次数 ×1（上限 5）、全部检索词命中额外 +4，返回带一行摘要的有序结果；子串匹配使中文无需分词即可命中。向量召回刻意不引入（个人规模下文件检索足够，见 Roadmap）。
+  - **`memory_topic(topic)`**：读取单个工作区主题的全文（含失效标记）。
+  - 主题名做文件名安全校验（拒绝路径分隔符与 Windows 保留字符、禁止 `.` 开头、≤64 字符）；单主题正文上限 16 KiB，超限报错而非静默截断。
 
 ### Removed
 
@@ -28,9 +34,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Verified
 
-- 38/38 测试通过 @ **0.1.7-alpha.1** 依赖线（与 2026-09-22 后的官方桌面/网页运行时一致）。
+- 52/52 测试通过 @ **0.1.7-alpha.1** 依赖线（与 2026-09-22 后的官方桌面/网页运行时一致）。
 - 0.2.0-rc.2 依赖线的复核在 Phase 1–3 功能全部落地后统一执行。
-- 新增 11 个测试覆盖：失效/复活 round-trip（含 reason 内 `|` 字符）、reason 单行化与长度上限、失效未知 key 报错、stale 判定阈值/开关/无时间戳、失效与 stale 标注渲染、失效条目优先淘汰、Context 级验证（失效条目离开提示词、`includeStale` 审计、复活回归、`staleAfterDays` 提示词标注）。
+- 新增 25 个测试（11 → Phase 1，14 → Phase 2）：
+  - Phase 1：失效/复活 round-trip（含 reason 内 `|` 字符）、reason 单行化与长度上限、失效未知 key 报错、stale 判定阈值/开关/无时间戳、失效与 stale 标注渲染、失效条目优先淘汰，以及 Context 级验证（失效条目离开提示词、`includeStale` 审计、复活回归、`staleAfterDays` 提示词标注）。
+  - Phase 2：主题文件 round-trip（含转义行与失效标记）、主题名校验、索引重建（失效主题不入索引、新近优先）、检索评分与排序（含中文子串、`includeStale` 标记）、工作区存储 set/append/invalidate/remove、超限拒绝、同一 `cwd` 身份稳定、同步索引读取，以及 Context 级验证（`scope=workspace` 经真实工具注册表落盘、无 agent 时的清晰报错、`memory_search` 跨层检索与 `memory_topic` 全文、索引只对携带 agent 的装配注入且按工作区隔离、`workspacePromptMaxBytes=0` 关闭注入）。
 
 ## [0.1.2] — 2026-08-15
 

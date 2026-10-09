@@ -7,6 +7,9 @@ lib/
 # local npm cache used in sandboxed environments
 .npm-cache/
 
+# local pnpm store (kept inside repo dir for sandbox installs)
+.pnpm-store/
+
 # logs / scratch
 *.log
 test-output.log

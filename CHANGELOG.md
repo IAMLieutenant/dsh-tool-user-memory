@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-10-09
+
+适配 DSH 0.1.7 / 0.2.0-rc 版本线（2026-08-17 之后的全部运行时演进）。
+
+### Changed
+
+- **peer 依赖升级到新版本线**：`@deepseek-ai/cordis >=4.0.3 <5.0.0`、`@deepseek-ai/dsh-tools` 与 `@deepseek-ai/dsh-home-paths` `>=0.1.7-alpha.1 <0.2.0 || >=0.2.0-rc.2 <0.3.0`、`@deepseek-ai/schemastery >=3.18.3 <4.0.0`。旧范围（`^0.1.0-rc.6`）在新运行时下会装出与宿主不一致的旧包版本。
+- **`JsonValue` 类型改从 `@deepseek-ai/dsh-util-values` 导入**：该类型在 0.1.7 线从 `@deepseek-ai/dsh-session` 迁移，旧导入路径在新版已不存在。
+- **开发工具链切换为 pnpm**（与 DSH 运行时安装器一致）：npm 的 peer 自动解析会顺着上游 `^0.1.7-alpha.1` 范围把 `dsh-invariants`、`dsh-brand` 等拉成 0.1.7-rc.x（要求 cordis ~4.0.4），与 4.0.3 运行时冲突；pnpm 精确锁定可复现运行时环境。devDeps 全部精确锁定到 0.1.7-alpha.1（cordis 4.0.3 / schemastery 3.18.3 / cosmokit 1.8.4 / zod 4.6.5）。
+
+### Removed
+
+- 对 DSH 0.1.0–0.1.6 版本线的兼容（该线 peer 组合已不在新范围覆盖内）。
+
+### Verified
+
+- 27/27 测试通过 @ **0.1.7-alpha.1** 依赖线（与 2026-09-22 后的官方桌面/网页运行时一致）。
+- 27/27 测试通过 @ **0.2.0-rc.2** 依赖线（cordis 4.0.4 / schemastery 3.18.4 / cosmokit 1.8.5），确认代码同时兼容两条线。
+- 全部 27 个测试覆盖：profile round-trip/转义/淘汰、store 原子写/LRU、真实 cordis Context 下的工具注册与执行、系统提示词注入（空画像零 token、预算裁剪新近优先）、完整 agent-loop（脚本化 LLM 适配）。
+
 ## [0.1.2] — 2026-08-15
 
 ### Fixed
@@ -64,6 +84,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A brand-new session answered from the injected `{{user_profile}}` without
   calling any tool.
 
+[0.2.0]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.0
 [0.1.2]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.1.2
 [0.1.1]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.1.1
 [0.1.0]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.1.0

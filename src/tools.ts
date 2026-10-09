@@ -5,6 +5,7 @@
 
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import type { Context } from '@deepseek-ai/cordis';
+import type { JsonValue } from '@deepseek-ai/dsh-util-values';
 import { renderEntries, type MergeMode } from './profile.ts';
 import type { MemoryStore } from './store.ts';
 
@@ -49,7 +50,7 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore): void {
       async execute(args: {
         query?: string;
         limit?: number;
-      }): Promise<Record<string, import('@deepseek-ai/dsh-session').JsonValue>> {
+      }): Promise<Record<string, JsonValue>> {
         const entries = await store.list();
         const query = (args.query ?? '').trim().toLowerCase();
         const filtered =
@@ -112,7 +113,7 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore): void {
         key: string;
         value: string;
         mode?: MergeMode;
-      }): Promise<Record<string, import('@deepseek-ai/dsh-session').JsonValue>> {
+      }): Promise<Record<string, JsonValue>> {
         const result = await store.update(args.key, args.value, args.mode ?? 'set');
         return result.ok
           ? {

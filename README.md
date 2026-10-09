@@ -45,7 +45,7 @@
 
 ### 前置条件
 
-- 已安装并跑通 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh` CLI；已在 0.1.0-rc.x 验证）
+- 已安装并跑通 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh` CLI；已在 0.1.7-alpha.x / 0.2.0-rc.x 验证）
 - 无需单独安装 npm 包！`dsh plugin` 会替你装好
 
 ### 安装（推荐：一条命令）
@@ -72,9 +72,10 @@ dsh plugin --profile headless add dsh-tool-user-memory
 ```sh
 git clone https://github.com/IAMLieutenant/dsh-tool-user-memory.git
 cd dsh-tool-user-memory
-npm install && npm run build
-npm pack                       # 生成 dsh-tool-user-memory-0.1.2.tgz
-dsh plugin --profile web add ./dsh-tool-user-memory-0.1.2.tgz
+pnpm install --frozen-lockfile
+pnpm run build
+pnpm pack                       # 生成 dsh-tool-user-memory-0.2.0.tgz
+dsh plugin --profile web add ./dsh-tool-user-memory-0.2.0.tgz
 ```
 
 ### 手动配置（可选）
@@ -199,9 +200,9 @@ dsh plugin --profile web add ./dsh-tool-user-memory-0.1.2.tgz
 ## 7. 从源码开发
 
 ```sh
-npm install
-npm test          # 21/21：单测 + 存储集成 + harness 集成 + 完整 AgentLoop 循环级测试
-npm run build     # tsc → lib/
+pnpm install
+pnpm test           # 27/27：单测 + 存储集成 + harness 集成 + 完整 AgentLoop 循环级测试（0.1.7-alpha.1 与 0.2.0-rc.2 双线全绿）
+pnpm run build       # tsc → lib/
 ```
 
 - 存储层刻意直接使用 `node:fs`（插件内部受信状态，同 settings/会话持久化），不走沙箱化的模型侧 `ctx.fs`。
@@ -211,10 +212,13 @@ npm run build     # tsc → lib/
 
 ## 8. Roadmap（v2）
 
-- 语义记忆 `memory_search`（向量召回，可复用 chroma 经验）
+v2 路线基于 2026-10 对 OpenAI（Dreaming）、Claude Code（自动记忆分层）、Letta（sleep-time compute / 文件系统基准）、Mem0、Zep（双时态失效）等记忆架构的调研结论：
+
+- **时间语义**：软失效（`invalidated-at`，保留历史不删除）+ 老化配置，让记忆「随时间保持正确」（对照 OpenAI 三轴：事实回忆 / 偏好遵循 / 时间正确）
+- **记忆分层**：全局画像（现有）+ 工作区级记忆（索引 + 主题文件，懒加载，对齐 Claude Code auto-memory 结构）
+- **`memory_search`**：文件检索优先（关键词 + 评分）；向量召回仅在条目 > ~500 时作为可选项（Letta 基准：个人规模下纯文件检索已超过 Mem0 图方案）
+- **后台巩固（"dreaming"）**：会话空闲 / compaction / 定时触发，后台 LLM 提取、合并、时间改写（「要去」→「去过」）、失效，产出可审计的 consolidation log
 - 多用户画像（按会话身份分文件）
-- 每工作区一份记忆的模式开关
-- 按 `updated-at` 老化清理久未使用的条目
 
 ---
 

@@ -52,7 +52,7 @@ You: "Remember: I prefer concise Chinese answers"
 ### Prerequisites
 
 - A working [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-  (`dsh` CLI; verified on 0.1.0-rc.x).
+  (`dsh` CLI; verified on 0.1.7-alpha.x / 0.2.0-rc.x).
 - No manual npm setup needed — `dsh plugin` installs the package for you.
 
 ### One command (recommended)
@@ -80,9 +80,10 @@ dsh plugin --profile headless add dsh-tool-user-memory
 ```sh
 git clone https://github.com/IAMLieutenant/dsh-tool-user-memory.git
 cd dsh-tool-user-memory
-npm install && npm run build
-npm pack                       # produces dsh-tool-user-memory-0.1.2.tgz
-dsh plugin --profile web add ./dsh-tool-user-memory-0.1.2.tgz
+pnpm install --frozen-lockfile
+pnpm run build
+pnpm pack                       # produces dsh-tool-user-memory-0.2.0.tgz
+dsh plugin --profile web add ./dsh-tool-user-memory-0.2.0.tgz
 ```
 
 ### Configuration (optional)
@@ -213,9 +214,9 @@ Returns `{ ok, key, mode, bytes, error? }`.
 ## 7. Development
 
 ```sh
-npm install
-npm test          # 21/21: unit + storage integration + harness integration + full AgentLoop test
-npm run build     # tsc → lib/
+pnpm install
+pnpm test           # 27/27: unit + storage integration + harness integration + full AgentLoop test (green on both the 0.1.7-alpha.1 and 0.2.0-rc.2 dependency lines)
+pnpm run build       # tsc → lib/
 ```
 
 - The storage layer deliberately uses `node:fs` directly (plugin-internal trusted
@@ -228,10 +229,13 @@ npm run build     # tsc → lib/
 
 ## 8. Roadmap (v2)
 
-- Semantic `memory_search` (embedding recall, reuse chroma experience)
+The v2 roadmap follows the 2026-10 survey of memory architectures at OpenAI (Dreaming), Claude Code (layered auto-memory), Letta (sleep-time compute / filesystem benchmarks), Mem0, and Zep (bi-temporal invalidation):
+
+- **Temporal semantics**: soft invalidation (`invalidated-at`, history preserved, never deleted) + aging config, so memories "stay correct over time" (benchmarked against OpenAI's three axes: fact recall / preference adherence / temporal correctness)
+- **Memory layering**: global profile (existing) + per-workspace memory (index + topic files, lazy-loaded, mirroring Claude Code auto-memory)
+- **`memory_search`**: file-based search first (keyword + scoring); embedding recall only as an option past ~500 entries (Letta benchmark: plain file search already beats Mem0's graph approach at personal scale)
+- **Background consolidation ("dreaming")**: triggered on session idle / compaction / schedule; a background LLM pass extracts, merges, rewrites time (future → past), and invalidates, writing an auditable consolidation log
 - Per-user profiles (keyed by session identity)
-- Per-workspace memory mode
-- Aging cleanup of stale entries by `updated-at`
 
 ---
 

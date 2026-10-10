@@ -6,19 +6,19 @@ A persistent memory plugin for [DeepSeek Harness][harness], implemented through 
 
 The plugin supports a global user profile, project memory organized by working directory, keyword search, soft invalidation, and memory consolidation. This project is developed and maintained independently by the community.
 
-[中文][readme-zh] · [npm][npm-url] · [Changelog][changelog] · [Release v0.2.3][release-url]
+[中文][readme-zh] · [npm][npm-url] · [Changelog][changelog] · [Release v0.3.0][release-url]
 
 ## Quick start
 
 With DeepSeek Harness installed, run:
 
 ```sh
-dsh plugin --profile web add dsh-tool-user-memory@0.2.3
+dsh plugin --profile web add dsh-tool-user-memory@0.3.0
 ```
 
 Replace `web` with the profile you use. Restart your DSH session after installation; in web mode, restart `dsh web`.
 
-Memory tools and prompt injection are enabled by default. Automatic consolidation is disabled by default, and model-assisted consolidation requires a configured provider and model. Existing memory files require no manual migration when upgrading to 0.2.3.
+Memory tools and prompt injection are enabled by default. Automatic consolidation is disabled by default, and model-assisted consolidation requires a configured provider and model. Existing memory files require no manual migration when upgrading to 0.3.0.
 
 ## Contents
 
@@ -71,7 +71,7 @@ Writes use atomic replacement, with serialization within a process and a lock ac
 ### Requirements
 
 - A working [DeepSeek Harness][harness] installation with the `dsh` CLI.
-- Version 0.2.3 has passed builds and 92 tests on each of the DSH dependency versions `0.1.7-alpha.1` and `0.2.0-rc.2`.
+- Version 0.3.0 has passed builds and 108 tests on each of the DSH dependency versions `0.1.7-alpha.1` and `0.2.0-rc.2`.
 - `dsh plugin` installs the npm package and adds the plugin to the profile's bundle configuration using its `dsh.bundle.patch` declaration.
 
 ### Installation and upgrades
@@ -79,7 +79,7 @@ Writes use atomic replacement, with serialization within a process and a lock ac
 The quick-start command applies to both installation and upgrades. Other profiles use the same syntax, for example:
 
 ```sh
-dsh plugin --profile headless add dsh-tool-user-memory@0.2.3
+dsh plugin --profile headless add dsh-tool-user-memory@0.3.0
 ```
 
 ### Installation from source
@@ -90,13 +90,13 @@ cd dsh-tool-user-memory
 pnpm install --frozen-lockfile
 pnpm run build
 pnpm pack
-dsh plugin --profile web add ./dsh-tool-user-memory-0.2.3.tgz
+dsh plugin --profile web add ./dsh-tool-user-memory-0.3.0.tgz
 ```
 
 ### Verification
 
 1. Check the profile's `package.json` and confirm that `dsh.profile.bundles` includes `dsh-tool-user-memory`.
-2. Restart the session and ask the agent which memory tools are available. Version 0.2.3 provides the five tools documented below.
+2. Restart the session and ask the agent which memory tools are available. Version 0.3.0 provides the seven tools documented below.
 3. Request that a preference be saved, confirm a successful tool result, and check that the profile file contains the entry.
 
 Example profile configuration:
@@ -193,6 +193,40 @@ Use `memory_consolidate` with `mode=plan` to inspect a plan. Use `mode=apply` to
 3. Check that the answer matches the record; use `memory_get` for verification if needed.
 
 Under the default configuration, the valid profile is injected into the system prompt within its budget. The model can read this content without first calling a tool, but answer accuracy still depends on model behavior.
+
+### Move memory to another computer
+
+Version 0.3.0 adds `memory_export`, `memory_import`, and the standalone `dsh-memory` command. Exports include the global profile, every stored project, timestamps, and invalidation state. Only memory files are read; consolidation logs, plugin configuration, caches, and account credential stores are excluded. Imports rebuild the project index for the mapped local directory. Same-key conflicts retain local entries by default; unmapped projects are listed and skipped.
+
+The old computer does not need a plugin upgrade. Run this in PowerShell, then transfer the resulting JSON file using your preferred method:
+
+```powershell
+npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory export --file "$env:USERPROFILE\dsh-memory.json"
+```
+
+An existing destination is never overwritten. DSH can remain open: each memory document is read under its lock, although different projects may be snapshotted at different times. Pause memory updates for a more consistent export. Stored memory remains exportable after its original project directory has been deleted.
+
+On the new computer, upgrade the plugin and restart the session. Ask the agent to preview the transferred file with `memory_import`, retain local conflicts, list unmapped projects, and wait before applying. Supply an explicit local directory for every project you want to import. Applying requires the confirmed preview's `previewToken`; changes to the source, options, or destination require a new preview.
+
+Command-line import is also supported:
+
+```powershell
+npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory import --file "$env:USERPROFILE\dsh-memory.json" --map "exportedProjectID=C:\projects\demo"
+# After confirming, use the same options with the token returned by preview:
+npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory import --file "$env:USERPROFILE\dsh-memory.json" --map "exportedProjectID=C:\projects\demo" --apply --token "returnedPreviewToken"
+```
+
+Use repeated `--map` options for multiple projects. Target directories must exist. `--policy use-imported` replaces same-key conflicts; `--skip-profile` imports mapped projects only. Capacity overflow aborts the import without eviction. Bundles and individual import backups are limited to 16 MiB.
+
+The CLI reads `$DSH_HOME/user-memory`, or `~/.dsh/user-memory` when unset. It does not read plugin configuration. Custom storage and capacity require matching `--profile`, `--workspace-base`, and `--max-bytes` options. Tools use the running plugin's configuration.
+
+All changed files are backed up before the first memory write. Handled write failures trigger rollback. Forced process termination can leave a partial import; recovery journals remain in the profile directory's `migration-backups/*.json`. Restore using the returned `backupPath` and the same storage options:
+
+```powershell
+npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory rollback --file "returnedBackupPath"
+```
+
+Rollback refuses to overwrite files edited after import. Exports and backups contain full memory text and should be treated as personal data. Export never uploads the file.
 
 ## 5. Storage and lifecycle
 
@@ -310,6 +344,14 @@ Consolidation includes:
 
 The audit log records the trigger source, time, applied operations, skipped operations, and reasons. Operations are skipped if entries have changed or merge destinations are no longer valid when execution occurs.
 
+### `memory_export`
+
+Parameters: `destination` (required local JSON path), `scope` (`all` or `global`, default `all`). Returns the path, global entry count, and project IDs, source paths, and topic counts. Refuses existing destinations and live memory files.
+
+### `memory_import`
+
+Parameters: `source` (required), `includeProfile` (default `true`), `projectMap` (`[{id, path}]`), `policy` (default `keep-local`), `dryRun` (default `true`), and `previewToken`. Preview does not write memory. Applying with `dryRun=false` requires the confirmed preview token and returns counts plus `backupPath`. Identical imports do not duplicate entries.
+
 ## 7. Limitations and troubleshooting
 
 ### Behavior and security boundaries
@@ -344,12 +386,12 @@ pnpm test
 pnpm run build
 ```
 
-Validation results for 0.2.3:
+Validation results for 0.3.0:
 
 | DSH dependency version | Tests | TypeScript build |
 |---|---|---|
-| `0.1.7-alpha.1` | 92/92 passed | Passed |
-| `0.2.0-rc.2` | 92/92 passed | Passed |
+| `0.1.7-alpha.1` | 108/108 passed | Passed |
+| `0.2.0-rc.2` | 108/108 passed | Passed |
 
 Tests cover document parsing, concurrency locks, storage, project memory, consolidation, Harness integration, and AgentLoop tool calls. Loop tests use scripted model responses.
 
@@ -363,7 +405,9 @@ Tests cover document parsing, concurrency locks, storage, project memory, consol
 | `src/lock.ts` | Serialization within a process and locking across processes |
 | `src/workspace.ts` | Project topic storage, index rebuilding, and search |
 | `src/consolidate.ts` | Consolidation plans, model proposal validation, execution, and auditing |
-| `src/tools.ts` | Five memory tools available to the model |
+| `src/tools.ts` | Core memory tools and migration tool registration |
+| `src/migration.ts` | Snapshot validation, import previews, backups and recovery |
+| `src/migrate-cli.ts` | Standalone memory migration command |
 | `src/prompt.ts` | Prompt injection for the profile and project index |
 
 The storage layer uses `node:fs` to manage the plugin's persistent state.
@@ -379,6 +423,7 @@ The storage layer uses `node:fs` to manage the plugin's persistent state.
 | `0.2.1` | Fixes for lost concurrent writes and date rewrites resetting memory age |
 | `0.2.2` | Fixes for older consolidation plans overwriting newer content, unintended reactivation, reserved topic-name conflicts, and byte limits |
 | `0.2.3` | Concise Chinese package description and revised Chinese and English documentation |
+| `0.3.0` | Portable export/import, preview tokens, project mapping, conflict policies, backups, and rollback command |
 
 See the [changelog][changelog] for full release details.
 
@@ -399,7 +444,7 @@ These features are not yet implemented. Progress and acceptance criteria are tra
 [badge-release]: https://img.shields.io/github/v/release/IAMLieutenant/dsh-tool-user-memory
 [badge-license]: https://img.shields.io/badge/license-MIT-blue
 [npm-url]: https://www.npmjs.com/package/dsh-tool-user-memory
-[release-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.3
+[release-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.3.0
 [changelog]: CHANGELOG.md
 [readme-zh]: README.md
 [harness]: https://github.com/deepseek-ai/deepseek-harness

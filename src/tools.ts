@@ -20,6 +20,7 @@ import {
   type ConsolidateRunner,
 } from './consolidate.ts';
 import type { MemoryStore } from './store.ts';
+import { registerMigrationTools } from './migration-tools.ts';
 import {
   createWorkspaceMemory,
   searchTopics,
@@ -28,6 +29,8 @@ import {
 } from './workspace.ts';
 
 export interface MemoryToolsOptions {
+  /** Import rejects overflow instead of evicting existing memories. */
+  maxBytes?: number;
   staleAfterDays?: number;
   /** Base directory override for workspace memory (mainly for testing). */
   workspaceBase?: string;
@@ -88,6 +91,7 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
   const workspaceBase = options.workspaceBase ?? '';
   const consolidate = options.consolidate;
   const profilePath = store.path();
+  registerMigrationTools(ctx, { profilePath, workspaceBase, maxBytes: options.maxBytes });
 
   ctx.tools.register(
     defineTool({

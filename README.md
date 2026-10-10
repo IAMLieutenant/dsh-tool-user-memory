@@ -6,19 +6,19 @@
 
 支持全局用户画像、按工作目录组织的项目记忆、关键词检索、软失效和记忆整理。本项目由社区独立开发和维护。
 
-[English][readme-en] · [npm][npm-url] · [更新日志][changelog] · [Release v0.2.3][release-url]
+[English][readme-en] · [npm][npm-url] · [更新日志][changelog] · [Release v0.3.0][release-url]
 
 ## 快速开始
 
 在已安装 DeepSeek Harness 的环境中，运行：
 
 ```sh
-dsh plugin --profile web add dsh-tool-user-memory@0.2.3
+dsh plugin --profile web add dsh-tool-user-memory@0.3.0
 ```
 
 将 `web` 替换为实际使用的 profile。安装完成后重启 DSH 会话；web 模式需重启 `dsh web`。
 
-默认启用记忆工具和提示词注入。自动整理默认关闭，模型辅助整理需要配置 provider 与 model。已有记忆文件升级到 0.2.3 时无需手动迁移。
+默认启用记忆工具和提示词注入。自动整理默认关闭，模型辅助整理需要配置 provider 与 model。已有记忆文件升级到 0.3.0 时无需手动迁移。
 
 ## 目录
 
@@ -71,7 +71,7 @@ dsh plugin --profile web add dsh-tool-user-memory@0.2.3
 ### 环境要求
 
 - 已安装并可运行 [DeepSeek Harness][harness] 的 `dsh` CLI。
-- 0.2.3 已在 DSH 依赖版本 `0.1.7-alpha.1` 和 `0.2.0-rc.2` 上分别完成构建与 92 项测试。
+- 0.3.0 已在 DSH 依赖版本 `0.1.7-alpha.1` 和 `0.2.0-rc.2` 上分别完成构建与 108 项测试。
 - `dsh plugin` 负责安装 npm 包，并根据包中的 `dsh.bundle.patch` 声明将插件加入 profile 的 bundle 配置。
 
 ### 安装与升级
@@ -79,7 +79,7 @@ dsh plugin --profile web add dsh-tool-user-memory@0.2.3
 快速开始中的命令同时适用于安装和升级。其他 profile 使用相同语法，例如：
 
 ```sh
-dsh plugin --profile headless add dsh-tool-user-memory@0.2.3
+dsh plugin --profile headless add dsh-tool-user-memory@0.3.0
 ```
 
 ### 从源码安装
@@ -90,13 +90,13 @@ cd dsh-tool-user-memory
 pnpm install --frozen-lockfile
 pnpm run build
 pnpm pack
-dsh plugin --profile web add ./dsh-tool-user-memory-0.2.3.tgz
+dsh plugin --profile web add ./dsh-tool-user-memory-0.3.0.tgz
 ```
 
 ### 验证安装
 
 1. 检查 profile 的 `package.json`，确认 `dsh.profile.bundles` 包含 `dsh-tool-user-memory`。
-2. 重启会话后，询问 agent 可用的记忆工具。0.2.3 提供下文列出的五个工具。
+2. 重启会话后，询问 agent 可用的记忆工具。0.3.0 提供下文列出的七个工具。
 3. 请求保存一条偏好，确认工具返回成功，再检查画像文件是否包含对应条目。
 
 profile 配置示例：
@@ -193,6 +193,44 @@ profile 配置示例：
 3. 检查回答是否与记录一致；必要时调用 `memory_get` 核验。
 
 在默认配置下，有效画像会在预算范围内注入系统提示词，因此模型无需先调用工具即可读取这部分内容。实际回答是否正确仍取决于模型行为。
+
+### 换电脑：导出与导入记忆
+
+0.3.0 提供 `memory_export` / `memory_import` 和独立命令 `dsh-memory`。导出包含全局画像、全部已存储项目、更新时间及失效状态；仅读取记忆文件，不读取整理日志、插件配置、缓存或账号凭证文件。导入根据新项目目录重新生成索引，默认保留本机同名内容。未映射的项目会明确列出并跳过。
+
+**旧电脑无需升级插件。** 在 PowerShell 中运行下面的命令，将导出文件保存到用户目录，再通过 U 盘或你选择的方式传到新电脑：
+
+```powershell
+npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory export --file "$env:USERPROFILE\dsh-memory.json"
+```
+
+已有文件不会被覆盖；再次导出时请换一个文件名。DSH 可以保持打开，导出对每份记忆加锁读取；各项目快照可能来自不同时间，导出期间暂停修改记忆可取得更一致的快照。原项目目录已经删除也能导出其已存储记忆。
+
+在**新电脑**升级插件并重启会话后，对 agent 说：
+
+> 使用 memory_import 预览导入 `C:\Users\你的用户名\dsh-memory.json`，默认保留本机内容。列出未匹配的项目，先不要执行导入。
+
+如需项目记忆，告诉 agent 哪个旧项目对应哪个本机目录。确认新增、冲突和未匹配数量后，再让 agent 执行该预览。导入必须携带 `previewToken`；文件、配置或目标记忆已变化时，需要重新预览。
+
+也可完全使用命令行。以下示例里的项目 ID 来自导出结果或导入预览；新项目目录必须存在：
+
+```powershell
+npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory import --file "$env:USERPROFILE\dsh-memory.json" --map "项目ID=C:\projects\demo"
+# 确认预览后，保留相同选项并加入执行标志与返回的 token：
+npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory import --file "$env:USERPROFILE\dsh-memory.json" --map "项目ID=C:\projects\demo" --apply --token "返回的previewToken"
+```
+
+`--policy use-imported` 明确替换同名内容；`--skip-profile` 只导入映射的项目；多个项目使用多个 `--map`。导入超出全局容量或单主题容量时会拒绝操作，不自动淘汰记忆。导出包和单次导入备份均限制为 16 MiB。
+
+CLI 默认读取 `$DSH_HOME/user-memory`（未设置 `DSH_HOME` 时为 `~/.dsh/user-memory`），不会读取 DSH 插件配置。自定义存储或容量时，传入 `--profile <user.md路径>`、`--workspace-base <目录>`、`--max-bytes <字节数>`；DSH 工具直接使用插件配置。
+
+导入先备份所有待修改文件，再写入记忆；发生可处理的写入错误时自动回滚。进程被强制终止时可能只写入一部分，恢复记录保存在画像目录的 `migration-backups/*.json`。工具返回 `backupPath` 后，可使用相同存储选项恢复：
+
+```powershell
+npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory rollback --file "backupPath对应的文件"
+```
+
+导入后又被修改的文件会阻止回滚，以免覆盖新内容。导出 JSON 和备份包含完整记忆正文，请按个人资料保存；导出过程不会上传文件。
 
 ## 5. 数据存储与生命周期
 
@@ -310,6 +348,14 @@ $DSH_HOME/user-memory/
 
 审计日志记录触发来源、时间、已执行和已跳过的操作及原因。执行时发现条目已变更或合并目标不再有效，会跳过相关操作。
 
+### `memory_export`
+
+参数：`destination`（必填，本机 JSON 路径）、`scope`（`all` 或 `global`，默认 `all`）。返回文件路径、全局条目数及项目 ID、原目录和主题数。拒绝覆盖已有文件或写入活动记忆文件。
+
+### `memory_import`
+
+参数：`source`（必填）、`includeProfile`（默认 `true`）、`projectMap`（`[{id, path}]`）、`policy`（默认 `keep-local`）、`dryRun`（默认 `true`）、`previewToken`。预览不写入记忆；`dryRun=false` 必须传入已确认的预览 token。执行返回实际数量及 `backupPath`，重复导入相同内容不会重复创建条目。
+
 ## 7. 限制与故障排查
 
 ### 行为与安全边界
@@ -344,12 +390,12 @@ pnpm test
 pnpm run build
 ```
 
-0.2.3 的验证结果：
+0.3.0 的验证结果：
 
 | DSH 依赖版本 | 测试 | TypeScript 构建 |
 |---|---|---|
-| `0.1.7-alpha.1` | 92/92 通过 | 通过 |
-| `0.2.0-rc.2` | 92/92 通过 | 通过 |
+| `0.1.7-alpha.1` | 108/108 通过 | 通过 |
+| `0.2.0-rc.2` | 108/108 通过 | 通过 |
 
 测试覆盖文档解析、并发锁、存储、项目记忆、整理、Harness 集成和 AgentLoop 工具调用。循环测试使用固定模型响应。
 
@@ -363,7 +409,9 @@ pnpm run build
 | `src/lock.ts` | 进程内串行化与跨进程锁 |
 | `src/workspace.ts` | 项目主题存储、索引重建与检索 |
 | `src/consolidate.ts` | 整理方案、模型提案校验、执行与审计 |
-| `src/tools.ts` | 五个模型可调用的记忆工具 |
+| `src/tools.ts` | 核心记忆工具与迁移工具注册 |
+| `src/migration.ts` | 导出格式校验、导入预览、备份与恢复 |
+| `src/migrate-cli.ts` | 独立记忆迁移命令 |
 | `src/prompt.ts` | 用户画像与项目索引的提示词注入 |
 
 存储层使用 `node:fs` 管理插件自身的持久化状态。
@@ -379,6 +427,7 @@ pnpm run build
 | `0.2.1` | 修复并发写入丢失及日期改写重置记忆年龄的问题 |
 | `0.2.2` | 修复旧整理方案覆盖新内容、失效记录意外恢复、保留主题名冲突及字节限制问题 |
 | `0.2.3` | 将插件列表描述改为简洁中文，并更新中英文 README 的结构与表述 |
+| `0.3.0` | 增加跨电脑记忆导出、导入预览、项目目录映射、冲突策略、自动备份和回滚命令 |
 
 完整变更记录见 [CHANGELOG][changelog]。
 
@@ -399,7 +448,7 @@ pnpm run build
 [badge-release]: https://img.shields.io/github/v/release/IAMLieutenant/dsh-tool-user-memory
 [badge-license]: https://img.shields.io/badge/license-MIT-blue
 [npm-url]: https://www.npmjs.com/package/dsh-tool-user-memory
-[release-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.3
+[release-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.3.0
 [changelog]: CHANGELOG.md
 [readme-en]: README.en.md
 [harness]: https://github.com/deepseek-ai/deepseek-harness

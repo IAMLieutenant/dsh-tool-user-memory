@@ -1,10 +1,13 @@
 {
   "name": "dsh-tool-user-memory",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "为 DSH 提供跨会话用户偏好与项目记忆。",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
+  "bin": {
+    "dsh-memory": "lib/migrate-cli.js"
+  },
   "exports": {
     ".": {
       "types": "./lib/types/index.d.ts",

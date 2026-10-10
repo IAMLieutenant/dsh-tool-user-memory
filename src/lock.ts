@@ -88,9 +88,22 @@ export async function withDocumentLock<T>(
 ): Promise<T> {
   return withProcessLock(lockPath, async () => {
     await acquireLock(lockPath, options);
+    // Imports can hold several document locks while writing a backup. Keep
+    // active locks fresh so another process cannot mistake them for a crash.
+    let refresh = Promise.resolve();
+    const interval = Math.max(1, Math.min(5_000, Math.floor((options.staleMs ?? DEFAULT_LOCK_STALE_MS) / 3)));
+    const heartbeat = setInterval(() => {
+      refresh = refresh.then(async () => {
+        const now = new Date();
+        await fsp.utimes(lockPath, now, now).catch(() => undefined);
+      });
+    }, interval);
+    heartbeat.unref();
     try {
       return await operation();
     } finally {
+      clearInterval(heartbeat);
+      await refresh;
       await fsp.unlink(lockPath).catch(() => undefined);
     }
   });

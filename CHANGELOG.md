@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-10-10
+
+### Added
+
+- `memory_export` / `memory_import`：通过版本化 JSON 迁移全局画像及全部项目主题，保留更新时间、失效时间和原因。
+- 独立 `dsh-memory` CLI：旧电脑无需升级或关闭 DSH 即可导出；支持显式项目目录映射、仅导入项目及自定义存储选项。
+- 导入默认预览和保留本机冲突；执行必须使用预览 token，并在文件锁内核验源文件、配置及目标快照。未映射的项目明确列出并跳过。
+- 写入前保存完整变更文件备份；可处理的失败自动回滚，强制中断后可用 `rollback` 命令恢复。回滚拒绝覆盖导入后的新修改。
+- 校验导出格式、时间、保留名称、重复条目、文件和容量；超限拒绝导入，不自动淘汰记忆。导出拒绝覆盖已有文件。
+
+### Changed
+
+- 活动文件锁定期刷新时间戳，避免长迁移操作被其他进程误判为遗留锁。
+- 中英文 README 增加两台电脑迁移步骤及恢复说明。插件列表描述继续使用简洁中文。
+
 ## [0.2.3] — 2026-10-10
 
 ### Changed

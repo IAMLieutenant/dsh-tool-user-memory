@@ -222,7 +222,7 @@ export function apply(ctx: Context, config: UserMemoryConfig): void {
     return { plan, record, mode: request.mode, ...(modelError === undefined ? {} : { modelError }) };
   }
 
-  registerMemoryTools(ctx, store, { staleAfterDays, workspaceBase, consolidate });
+  registerMemoryTools(ctx, store, { staleAfterDays, workspaceBase, consolidate, maxBytes: config.maxBytes });
 
   if (config.autoConsolidate === true) {
     const minInterval = config.consolidateMinIntervalMs ?? DEFAULT_CONSOLIDATE_MIN_INTERVAL_MS;

@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { readFile, utimes, writeFile } from 'node:fs/promises';
+import { readFile, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LockTimeoutError, withDocumentLock, withProcessLock } from '../src/lock.ts';
@@ -109,4 +109,19 @@ test('withDocumentLock releases the lock when the operation throws', async () =>
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('withDocumentLock refreshes active locks during a long operation', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-lock-heartbeat-'));
+  const lock = join(dir, 'doc.lock');
+  try {
+    await withDocumentLock(lock, async () => {
+      const first = (await stat(lock)).mtimeMs;
+      await new Promise(resolve => setTimeout(resolve, 160));
+      const refreshed = (await stat(lock)).mtimeMs;
+      assert.ok(refreshed > first + 60, 'lock heartbeat refreshed the timestamp');
+      assert.ok(Date.now() - refreshed < 90, 'active lock stays inside its stale threshold');
+    }, { staleMs: 90 });
+    await assert.rejects(readFile(lock), { code: 'ENOENT' });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

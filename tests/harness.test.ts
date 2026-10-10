@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Context } from '@deepseek-ai/cordis';
@@ -109,10 +109,43 @@ test('harness: plugin mounts and registers memory_get / memory_update', async ()
     await mountProfile(ctx, file);
     assert.ok(ctx.tools.get('memory_get'), 'memory_get registered');
     assert.ok(ctx.tools.get('memory_update'), 'memory_update registered');
+    assert.ok(ctx.tools.get('memory_export'), 'memory_export registered');
+    assert.ok(ctx.tools.get('memory_import'), 'memory_import registered');
   } finally {
     await disposeCtx(ctx);
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('harness: migration tools export, preview mappings, require token and apply through the registry', async () => {
+  const { dir, file } = tempProfile();
+  const ctx = new Context();
+  const base = join(dir, 'workspace-memory');
+  const target = join(dir, 'new-project');
+  const source = join(dir, 'export.json');
+  try {
+    await mkdir(target);
+    await mountAgentLoopTestDependencies(ctx);
+    await mountProfile(ctx, file, true, 2048, 0, base);
+    await runUpdate(ctx, 90, 'language', '中文');
+    await runTool(ctx, 91, 'memory_update', { scope: 'workspace', key: 'build', value: 'pnpm build' }, dir);
+    const exported = await runTool(ctx, 92, 'memory_export', { destination: source });
+    const value = exported.value as { ok: boolean; profileEntries: number; projects: { id: string }[] };
+    assert.equal(value.ok, true);
+    assert.equal(value.profileEntries, 1);
+    const args = { source, projectMap: [{ id: value.projects[0]!.id, path: target }] };
+    const previewed = await runTool(ctx, 93, 'memory_import', args);
+    const preview = previewed.value as { ok: boolean; applied: boolean; previewToken: string; projects: { summary: { added: number } }[] };
+    assert.equal(preview.ok, true);
+    assert.equal(preview.applied, false);
+    assert.equal(preview.projects[0]?.summary.added, 1);
+    const rejected = await runTool(ctx, 94, 'memory_import', { ...args, dryRun: false });
+    assert.equal((rejected.value as { ok: boolean }).ok, false);
+    const imported = await runTool(ctx, 95, 'memory_import', { ...args, dryRun: false, previewToken: preview.previewToken });
+    assert.equal((imported.value as { applied: boolean }).applied, true);
+    const topic = await runTool(ctx, 96, 'memory_topic', { topic: 'build' }, target);
+    assert.equal((topic.value as { body: string }).body, 'pnpm build');
+  } finally { await disposeCtx(ctx); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('harness: memory_update executes through the registry and persists', async () => {

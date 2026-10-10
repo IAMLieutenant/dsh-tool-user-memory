@@ -2,11 +2,28 @@
 
 [![npm 版本][badge-npm]][npm-url] [![GitHub Release][badge-release]][release-url] [![MIT License][badge-license]](LICENSE)
 
-面向 [DeepSeek Harness][harness] 的持久化记忆插件，基于 Cordis 插件接口实现。插件将用户偏好和项目背景保存为本地 Markdown 文件，并通过系统提示词与工具调用，为后续会话提供可复用的上下文。
+**让 [DeepSeek Harness][harness] 记住你的偏好和项目背景，跨会话复用，换电脑也能迁移。**
 
-支持全局用户画像、按工作目录组织的项目记忆、关键词检索、软失效和记忆整理。本项目由社区独立开发和维护。
+减少每次开新会话时重复说明语言偏好、沟通方式和项目约定。记忆保存在本地 Markdown 文件中，支持直接查看、编辑和备份。本项目由社区独立开发和维护。
 
 [English][readme-en] · [npm][npm-url] · [更新日志][changelog] · [Release v0.3.0][release-url]
+
+## 核心特点
+
+| 你想解决的问题 | 插件提供的能力 |
+|---|---|
+| 新会话要重新交代偏好 | 全局用户画像持久保存，有效内容按预算注入系统提示词 |
+| 多个项目的约定容易混淆 | 按会话工作目录分别保存项目记忆，读取当前目录对应的内容 |
+| 换电脑后要重新积累记忆 | JSON 导出与导入，支持项目目录映射、冲突预览和导入备份 |
+| 想知道究竟记住了什么 | 本地 Markdown 文件可查看、编辑和备份，无需额外部署记忆服务 |
+| 旧信息过时后影响回答 | 软失效保留原文与原因，从提示词注入和默认检索中排除 |
+| 记忆越来越多，查找费劲 | 关键词检索、按主题读取，以及可选的记忆整理 |
+
+## 适合记住什么
+
+- **个人偏好**：用中文回答、解释先给结论、采用你习惯的沟通方式。
+- **项目背景**：测试命令、目录约定、重要决策，以及需要长期保留的操作说明。
+- **需要搬走的上下文**：在旧电脑导出，再在新电脑按项目目录对应关系导入。
 
 ## 快速开始
 
@@ -19,6 +36,16 @@ dsh plugin --profile web add dsh-tool-user-memory@0.3.0
 将 `web` 替换为实际使用的 profile。安装完成后重启 DSH 会话；web 模式需重启 `dsh web`。
 
 默认启用记忆工具和提示词注入。自动整理默认关闭，模型辅助整理需要配置 provider 与 model。已有记忆文件升级到 0.3.0 时无需手动迁移。
+
+### 安装后这样试一次
+
+1. 在 DSH 中说：**“请使用 memory_update 将‘默认用中文回答，先给结论，再解释细节’保存到全局用户画像。”** 确认工具返回写入成功。
+2. 使用同一存储配置开启新会话，说：**“请使用 memory_get 读取全局用户画像，告诉我已保存的回答偏好。”** 验证记忆能跨会话读取。
+3. 想搬到另一台电脑时，按[导出与导入指南](#换电脑导出与导入记忆)操作；旧电脑无需升级插件即可导出。
+
+模型是否准确采用偏好仍取决于其行为。上述步骤可以先验证记忆已经保存，并能在新会话中读取。
+
+如果这个插件对你有用，欢迎点 **⭐ Star**，方便以后找到。使用反馈、问题和功能建议欢迎提交到 [Issues][issues-url]。
 
 ## 目录
 
@@ -198,13 +225,31 @@ profile 配置示例：
 
 0.3.0 提供 `memory_export` / `memory_import` 和独立命令 `dsh-memory`。导出包含全局画像、全部已存储项目、更新时间及失效状态；仅读取记忆文件，不读取整理日志、插件配置、缓存或账号凭证文件。导入根据新项目目录重新生成索引，默认保留本机同名内容。未映射的项目会明确列出并跳过。
 
-**旧电脑无需升级插件。** 在 PowerShell 中运行下面的命令，将导出文件保存到用户目录，再通过 U 盘或你选择的方式传到新电脑：
+**旧电脑无需升级插件。** 按终端类型选择下面的一条命令，将导出文件保存到用户目录，再通过 U 盘或你选择的方式传到新电脑。
+
+**Windows 命令提示符（CMD，通常显示 `C:\...>`）：**
+
+```cmd
+npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory export --file "%USERPROFILE%\dsh-memory.json"
+```
+
+**PowerShell（通常显示 `PS C:\...>`）：**
 
 ```powershell
 npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory export --file "$env:USERPROFILE\dsh-memory.json"
 ```
 
+CMD 使用 `%USERPROFILE%`，PowerShell 使用 `$env:USERPROFILE`，请不要混用。混用可能把变量名当成目录名，导致 `ENOENT`。
+
 已有文件不会被覆盖；再次导出时请换一个文件名。DSH 可以保持打开，导出对每份记忆加锁读取；各项目快照可能来自不同时间，导出期间暂停修改记忆可取得更一致的快照。原项目目录已经删除也能导出其已存储记忆。
+
+首次执行 `npx` 可能需要下载包及依赖；等待时间可能来自网络请求。若这条命令以前已成功运行、包及依赖已缓存，可在 `npx` 后加入 `--offline` 使用缓存。CMD 示例：
+
+```cmd
+npx --offline --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory export --file "%USERPROFILE%\dsh-memory-offline.json"
+```
+
+缓存不完整时，离线命令会报错，需要使用联网命令完成下载。导出包最大为 16 MiB，实际大小取决于已保存的记忆。
 
 在**新电脑**升级插件并重启会话后，对 agent 说：
 
@@ -212,12 +257,21 @@ npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory export --file "$env:US
 
 如需项目记忆，告诉 agent 哪个旧项目对应哪个本机目录。确认新增、冲突和未匹配数量后，再让 agent 执行该预览。导入必须携带 `previewToken`；文件、配置或目标记忆已变化时，需要重新预览。
 
-也可完全使用命令行。以下示例里的项目 ID 来自导出结果或导入预览；新项目目录必须存在：
+也可完全使用命令行。以下示例里的项目 ID 来自导出结果或导入预览；新项目目录必须存在。
+
+**PowerShell：**
 
 ```powershell
 npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory import --file "$env:USERPROFILE\dsh-memory.json" --map "项目ID=C:\projects\demo"
 # 确认预览后，保留相同选项并加入执行标志与返回的 token：
 npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory import --file "$env:USERPROFILE\dsh-memory.json" --map "项目ID=C:\projects\demo" --apply --token "返回的previewToken"
+```
+
+**CMD：** 先运行第一行检查预览，再替换第二行的 token 并执行。
+
+```cmd
+npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory import --file "%USERPROFILE%\dsh-memory.json" --map "项目ID=C:\projects\demo"
+npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory import --file "%USERPROFILE%\dsh-memory.json" --map "项目ID=C:\projects\demo" --apply --token "返回的previewToken"
 ```
 
 `--policy use-imported` 明确替换同名内容；`--skip-profile` 只导入映射的项目；多个项目使用多个 `--map`。导入超出全局容量或单主题容量时会拒绝操作，不自动淘汰记忆。导出包和单次导入备份均限制为 16 MiB。
@@ -448,6 +502,7 @@ pnpm run build
 [badge-release]: https://img.shields.io/github/v/release/IAMLieutenant/dsh-tool-user-memory
 [badge-license]: https://img.shields.io/badge/license-MIT-blue
 [npm-url]: https://www.npmjs.com/package/dsh-tool-user-memory
+[issues-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues
 [release-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.3.0
 [changelog]: CHANGELOG.md
 [readme-en]: README.en.md

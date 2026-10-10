@@ -2,11 +2,28 @@
 
 [![npm version][badge-npm]][npm-url] [![GitHub release][badge-release]][release-url] [![MIT License][badge-license]](LICENSE)
 
-A persistent memory plugin for [DeepSeek Harness][harness], implemented through the Cordis plugin interface. It stores user preferences and project context in local Markdown files and makes that information available to subsequent sessions through system prompts and tool calls.
+**Give [DeepSeek Harness][harness] persistent user preferences and project context across sessions, with migration between computers.**
 
-The plugin supports a global user profile, project memory organized by working directory, keyword search, soft invalidation, and memory consolidation. This project is developed and maintained independently by the community.
+Reduce repeated explanations of your language preferences, communication style, and project conventions when starting a new session. Memory is stored in local Markdown files that you can inspect, edit, and back up. This project is developed and maintained independently by the community.
 
 [中文][readme-zh] · [npm][npm-url] · [Changelog][changelog] · [Release v0.3.0][release-url]
+
+## Highlights
+
+| What you need | What the plugin provides |
+|---|---|
+| Preferences that survive new sessions | A persistent global profile, with valid entries injected into system prompts within a byte budget |
+| Separate conventions for each project | Project memory selected by the session's working directory |
+| Memory that moves with you | JSON export and import, project directory mapping, conflict previews, and import backups |
+| Visibility into what is remembered | Local Markdown files you can inspect, edit, and back up, without deploying an additional memory service |
+| A way to retire outdated information | Soft invalidation retains text and reasons while excluding entries from prompt injection and default search |
+| Access to growing memory collections | Keyword search, topic reading, and optional consolidation |
+
+## What to remember
+
+- **Personal preferences:** response language, how much detail you want, and your preferred communication style.
+- **Project context:** test commands, directory conventions, important decisions, and operational notes worth retaining.
+- **Context to take with you:** export on your old computer, then import with project directories mapped to your new computer.
 
 ## Quick start
 
@@ -19,6 +36,16 @@ dsh plugin --profile web add dsh-tool-user-memory@0.3.0
 Replace `web` with the profile you use. Restart your DSH session after installation; in web mode, restart `dsh web`.
 
 Memory tools and prompt injection are enabled by default. Automatic consolidation is disabled by default, and model-assisted consolidation requires a configured provider and model. Existing memory files require no manual migration when upgrading to 0.3.0.
+
+### Try it after installation
+
+1. Ask DSH: **"Use memory_update to save 'Answer in English and start with the conclusion before explaining details' in my global user profile."** Confirm that the tool reports a successful write.
+2. Start a new session using the same storage configuration. Ask: **"Use memory_get to read my global user profile and tell me the response preferences saved there."** Verify that the saved memory can be read across sessions.
+3. To move it to another computer, follow the [export and import guide](#move-memory-to-another-computer). Exporting does not require upgrading the plugin on the old computer.
+
+Whether the model follows a preference accurately still depends on its behavior. These steps verify that the memory is saved and accessible in a new session.
+
+If this plugin is useful to you, **⭐ Star** the repository to find it again. Feedback, bug reports, and feature suggestions are welcome in [Issues][issues-url].
 
 ## Contents
 
@@ -198,22 +225,49 @@ Under the default configuration, the valid profile is injected into the system p
 
 Version 0.3.0 adds `memory_export`, `memory_import`, and the standalone `dsh-memory` command. Exports include the global profile, every stored project, timestamps, and invalidation state. Only memory files are read; consolidation logs, plugin configuration, caches, and account credential stores are excluded. Imports rebuild the project index for the mapped local directory. Same-key conflicts retain local entries by default; unmapped projects are listed and skipped.
 
-The old computer does not need a plugin upgrade. Run this in PowerShell, then transfer the resulting JSON file using your preferred method:
+The old computer does not need a plugin upgrade. Choose the command for your terminal, then transfer the resulting JSON file using your preferred method.
+
+**Windows Command Prompt (CMD, typically showing `C:\...>`):**
+
+```cmd
+npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory export --file "%USERPROFILE%\dsh-memory.json"
+```
+
+**PowerShell (typically showing `PS C:\...>`):**
 
 ```powershell
 npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory export --file "$env:USERPROFILE\dsh-memory.json"
 ```
 
+CMD uses `%USERPROFILE%`; PowerShell uses `$env:USERPROFILE`. Do not mix them: a variable may be treated as a literal directory name and cause `ENOENT`.
+
 An existing destination is never overwritten. DSH can remain open: each memory document is read under its lock, although different projects may be snapshotted at different times. Pause memory updates for a more consistent export. Stored memory remains exportable after its original project directory has been deleted.
+
+The first `npx` run may download the package and its dependencies, so a delay may come from network requests. If the command has already run successfully and its dependencies are cached, add `--offline` after `npx` to use the cache. CMD example:
+
+```cmd
+npx --offline --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory export --file "%USERPROFILE%\dsh-memory-offline.json"
+```
+
+Incomplete caches cause the offline command to fail; run the online command to finish downloading. Export bundles are limited to 16 MiB, and their actual size depends on the stored memory.
 
 On the new computer, upgrade the plugin and restart the session. Ask the agent to preview the transferred file with `memory_import`, retain local conflicts, list unmapped projects, and wait before applying. Supply an explicit local directory for every project you want to import. Applying requires the confirmed preview's `previewToken`; changes to the source, options, or destination require a new preview.
 
-Command-line import is also supported:
+Command-line import is also supported. Use the project ID returned by export or preview, and an existing target directory.
+
+**PowerShell:**
 
 ```powershell
 npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory import --file "$env:USERPROFILE\dsh-memory.json" --map "exportedProjectID=C:\projects\demo"
 # After confirming, use the same options with the token returned by preview:
 npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory import --file "$env:USERPROFILE\dsh-memory.json" --map "exportedProjectID=C:\projects\demo" --apply --token "returnedPreviewToken"
+```
+
+**CMD:** Run the first line to inspect the preview, then replace the token in the second line and run it to apply.
+
+```cmd
+npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory import --file "%USERPROFILE%\dsh-memory.json" --map "exportedProjectID=C:\projects\demo"
+npx --yes --package=dsh-tool-user-memory@0.3.0 dsh-memory import --file "%USERPROFILE%\dsh-memory.json" --map "exportedProjectID=C:\projects\demo" --apply --token "returnedPreviewToken"
 ```
 
 Use repeated `--map` options for multiple projects. Target directories must exist. `--policy use-imported` replaces same-key conflicts; `--skip-profile` imports mapped projects only. Capacity overflow aborts the import without eviction. Bundles and individual import backups are limited to 16 MiB.
@@ -444,6 +498,7 @@ These features are not yet implemented. Progress and acceptance criteria are tra
 [badge-release]: https://img.shields.io/github/v/release/IAMLieutenant/dsh-tool-user-memory
 [badge-license]: https://img.shields.io/badge/license-MIT-blue
 [npm-url]: https://www.npmjs.com/package/dsh-tool-user-memory
+[issues-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues
 [release-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.3.0
 [changelog]: CHANGELOG.md
 [readme-zh]: README.md

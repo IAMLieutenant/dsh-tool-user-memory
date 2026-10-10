@@ -94,6 +94,10 @@ export function normalizeTopic(topic: string): { ok: true; topic: string } | { o
   if (t === '') return { ok: false, error: 'topic must be a non-empty string' };
   if (t.length > TOPIC_MAX_NAME_CHARS) return { ok: false, error: 'topic must be at most 64 characters' };
   if (t.startsWith('.')) return { ok: false, error: 'topic must not start with a dot' };
+  if (t.toLowerCase() === 'memory') return { ok: false, error: 'MEMORY is reserved for the workspace index' };
+  if (t.endsWith('.') || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(t)) {
+    return { ok: false, error: 'topic must not use a reserved Windows filename or end with a dot' };
+  }
   if (FORBIDDEN_FILENAME_CHARS.test(t)) {
     return { ok: false, error: 'topic must not contain filename-reserved characters (\\ / : * ? " < > |)' };
   }
@@ -286,7 +290,7 @@ export interface WorkspaceMemory {
   /** One topic by name (undefined when missing); name matching is exact after normalize. */
   read(topic: string): Promise<WorkspaceTopic | undefined>;
   /** Apply one mutation and regenerate the index; never throws for policy errors. */
-  write(topic: string, body: string, mode: TopicMode, invalidateReason?: string): Promise<TopicWriteResult>;
+  write(topic: string, body: string, mode: TopicMode, invalidateReason?: string, expected?: WorkspaceTopic | null, dependency?: WorkspaceTopic): Promise<TopicWriteResult>;
   /** Keyword-scored hits over valid topics (see `searchTopics`). */
   search(query: string): Promise<WorkspaceHit[]>;
   /** Regenerable index text (valid topics only). */
@@ -421,7 +425,7 @@ export async function createWorkspaceMemory(options: WorkspaceMemoryOptions): Pr
     read: (topic) => findTopic(topic),
     indexText: async () => buildIndexText(await listAsync(dir), path),
     search: async (query) => searchTopics(await listAsync(dir), query),
-    async write(topic, body, mode, invalidateReason = ''): Promise<TopicWriteResult> {
+    async write(topic, body, mode, invalidateReason = '', expected, dependency): Promise<TopicWriteResult> {
       const norm = normalizeTopic(topic);
       if (!norm.ok) return { ok: false, topic, mode, error: norm.error };
       const normalized = norm.topic;
@@ -433,7 +437,6 @@ export async function createWorkspaceMemory(options: WorkspaceMemoryOptions): Pr
           error: `topic body exceeds ${TOPIC_MAX_BYTES} bytes`,
         };
       }
-      const file = nodePath.join(dir, `${normalized}.md`);
       const now = new Date().toISOString();
       try {
         // One lock per workspace directory: a topic write also rebuilds the
@@ -445,6 +448,27 @@ export async function createWorkspaceMemory(options: WorkspaceMemoryOptions): Pr
           const index = topics.findIndex(
             (t) => t.topic === normalized || t.topic.toLowerCase() === normalized.toLowerCase(),
           );
+          const existing = index >= 0 ? topics[index]! : null;
+          const unchanged = expected === undefined ||
+            (expected === null ? existing === null : existing !== null &&
+              existing.topic === expected.topic && existing.body === expected.body &&
+              existing.updatedAt === expected.updatedAt && existing.invalidatedAt === expected.invalidatedAt &&
+              existing.invalidReason === expected.invalidReason);
+          if (!unchanged) {
+            return { ok: false, topic: normalized, mode, error: `topic '${normalized}' changed since the consolidation plan; skipped` };
+          }
+          if (dependency !== undefined) {
+            const destination = topics.find((t) => t.topic === dependency.topic);
+            if (destination === undefined || destination.body !== dependency.body ||
+                destination.updatedAt !== dependency.updatedAt || destination.invalidatedAt !== dependency.invalidatedAt ||
+                destination.invalidReason !== dependency.invalidReason) {
+              return { ok: false, topic: normalized, mode, error: 'merge destination changed since the consolidation plan; skipped' };
+            }
+          }
+          // Reuse the original spelling when a caller changes case, including
+          // on case-sensitive filesystems.
+          const storedName = existing?.topic ?? normalized;
+          const file = nodePath.join(dir, `${storedName}.md`);
           if (mode === 'remove') {
             if (index >= 0) await fsp.unlink(file);
             await rebuildIndex(topics.filter((_, i) => i !== index));
@@ -464,13 +488,15 @@ export async function createWorkspaceMemory(options: WorkspaceMemoryOptions): Pr
             await rebuildIndex(topics.map((t, i) => (i === index ? updated : t)));
             return { ok: true, topic: normalized, mode };
           }
-          const existing = index >= 0 ? topics[index]! : null;
           const mergedBody =
             mode === 'append' && existing !== null && existing.body !== ''
               ? `${existing.body}\n${body}`
               : body;
+          if (Buffer.byteLength(mergedBody, 'utf8') > TOPIC_MAX_BYTES) {
+            return { ok: false, topic: normalized, mode, error: `combined topic body exceeds ${TOPIC_MAX_BYTES} bytes` };
+          }
           const updated: WorkspaceTopic = {
-            topic: normalized,
+            topic: storedName,
             body: mergedBody,
             updatedAt: now,
             invalidatedAt: '',

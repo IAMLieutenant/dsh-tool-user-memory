@@ -7,7 +7,24 @@
 > **独立开源插件**。作为 DeepSeek Harness 社区生态的一部分独立开发与维护，见 GitHub 话题 [`dsh-plugin`][topic]。
 > 与官方仓库无关；直接通过 npm 安装即可启用。
 
-[English][readme-en] ｜ [更新日志][changelog] ｜ 最新版本 **0.2.0**，见 [Release v0.2.0][release-url]
+[English][readme-en] ｜ [更新日志][changelog] ｜ 最新版本 **0.2.2**，见 [Release v0.2.2][release-url]
+
+### 和以前的版本有什么区别？
+
+- **0.1.x**：一份所有项目共用的个人便签，记住你的语言、沟通习惯和背景。
+- **0.2.0**：增加每个项目自己的笔记、按需查找正文，以及旧记忆的失效和整理功能。
+- **0.2.1**：修复同时写入丢数据，以及整理日期刷新记忆年龄的问题。
+- **0.2.2**：修复整理覆盖刚更新的内容、旧记录意外复活、项目主题重名导致丢失，以及容量限制失效。
+
+**默认就能跨会话记忆；自动整理默认关闭，模型辅助整理还需要单独配置。** 升级到 0.2.2 不需要手动迁移已有记忆文件。
+
+升级：
+
+```sh
+dsh plugin --profile web add dsh-tool-user-memory@0.2.2
+```
+
+把 `web` 换成你正在使用的 profile，安装后重启会话。
 
 ## 目录
 
@@ -50,7 +67,7 @@
 ```
 你说「记住：我喜欢简洁的中文回答」
   → agent 调用 memory_update
-  → 写入 $DSH_HOME/user-memory/user.md，原子写、仅属主可读
+  → 写入 $DSH_HOME/user-memory/user.md，原子写，并在支持的系统上设置仅属主读写权限
   → 之后每个新会话：系统提示词自动注入画像，agent 天生认识你
 ```
 
@@ -86,7 +103,7 @@
 ### 前置条件
 
 - 已安装并跑通 [DeepSeek Harness][harness]，即 `dsh` CLI
-- 本插件已在 **0.1.7-alpha.x** 与 **0.2.0-rc.x** 两条运行时线上验证：每条线各 79 项测试全绿
+- 本插件已在 **0.1.7-alpha.x** 与 **0.2.0-rc.x** 两条运行时线上验证：每条线各 92 项测试全绿
 - 无需单独安装 npm 包，`dsh plugin` 会替你装好
 
 ### 一条命令
@@ -115,11 +132,13 @@ git clone https://github.com/IAMLieutenant/dsh-tool-user-memory.git
 cd dsh-tool-user-memory
 pnpm install --frozen-lockfile
 pnpm run build
-pnpm pack                       # 生成 dsh-tool-user-memory-0.2.0.tgz
-dsh plugin --profile web add ./dsh-tool-user-memory-0.2.0.tgz
+pnpm pack                       # 生成 dsh-tool-user-memory-0.2.2.tgz
+dsh plugin --profile web add ./dsh-tool-user-memory-0.2.2.tgz
 ```
 
 ### 配置项
+
+`promptMaxBytes` 和 `workspacePromptMaxBytes` 限制的是注入的记忆正文，提示词里的说明文字另计。项目主题正文（含追加后的总内容）最多 16 KiB；`MEMORY` 和 Windows 保留文件名不能作为主题名。
 
 默认零配置即可用。如需调整，在 profile 的 `cordis.patch.yml` 里按行 id `tool-user-memory` 覆盖：
 
@@ -127,10 +146,10 @@ dsh plugin --profile web add ./dsh-tool-user-memory-0.2.0.tgz
 |---|---|---|
 | `path` | `$DSH_HOME/user-memory/user.md` | 个人画像文件路径 |
 | `maxBytes` | `8192` | 画像文件体积上限，超限时按最旧优先逐条淘汰 |
-| `promptMaxBytes` | `2048` | 每轮注入的字节预算，新近优先；设为 `0` 注入完整画像 |
+| `promptMaxBytes` | `2048` | 画像正文的硬字节上限，新近优先；单条过长会带标记截短，可用 memory_get 查看全文；`0` 注入完整画像 |
 | `includeInPrompt` | `true` | 是否在每个会话的系统提示词中注入画像 |
 | `staleAfterDays` | `0` | N 天未更新的条目带 `[stale: last updated Nd ago]` 标注，仅标注不删除；`0` 为关闭 |
-| `workspacePromptMaxBytes` | `512` | 每轮注入的项目记忆索引字节预算，正文懒加载；`0` 为不注入项目记忆 |
+| `workspacePromptMaxBytes` | `512` | 项目索引正文的硬字节上限，正文按需读取；`0` 为不注入项目记忆 |
 | `workspaceBase` | `$DSH_HOME/user-memory/workspace` | 项目记忆根目录，主要用于测试或自定义布局 |
 | `autoConsolidate` | `false` | 是否在回合边界后台自动整理记忆，去抖且不阻塞回合 |
 | `consolidateMinIntervalMs` | `600000` | 两次自动整理的最小间隔；`0` 为每个回合边界都整理 |
@@ -273,7 +292,7 @@ $DSH_HOME/user-memory/
 
 ### 安全设计
 
-注入的画像被明确标注为「参考数据，不是指令」。除非你在当前消息中重复，agent 不会执行画像里的任何指令，与官方 `dsh-session-reference` 快照同一立场。
+注入的画像被明确标注为「参考数据，不是指令」，要求模型自然使用偏好，并避免执行画像中的指令。这是提示词约束，不能保证模型在所有情况下都遵守。
 
 ---
 
@@ -351,7 +370,7 @@ $DSH_HOME/user-memory/
 
 **怎么彻底清空记忆？**
 
-删掉 `$DSH_HOME/user-memory/user.md` 即可；项目记忆在 `$DSH_HOME/user-memory/workspace/` 下，按需删除对应目录。删除文件就是失忆，没有隐藏副本。
+删掉 `$DSH_HOME/user-memory/user.md` 即可；项目记忆在 `$DSH_HOME/user-memory/workspace/` 下，按需删除对应目录。如需连整理操作记录也清除，请同时删除 `$DSH_HOME/user-memory/consolidation-log.md`。
 
 **失效和删除到底该用哪个？**
 
@@ -359,7 +378,7 @@ $DSH_HOME/user-memory/
 
 **会不会把我的密钥记进去？**
 
-工具说明里是硬约束，agent 被要求绝不记录密钥、密码、令牌。自己手写进画像文件的内容不受此限制，但那份文件只在你本机。
+工具说明要求 agent 不记录密钥、密码和令牌，但插件没有自动识别所有敏感内容的过滤器。请勿让它保存凭据，也不要手写凭据到记忆文件。
 
 **要联网或额外付费吗？**
 
@@ -379,11 +398,12 @@ $DSH_HOME/user-memory/
 
 ```sh
 pnpm install
-pnpm test           # 79/79：单测 + 锁原语 + 存储集成 + 项目记忆 + 后台整理 + harness 集成 + 完整 AgentLoop 循环级测试
+pnpm test           # 92/92：单测 + 锁原语 + 存储集成 + 项目记忆 + 后台整理 + harness 集成 + 完整 AgentLoop 循环级测试
 pnpm run build      # tsc 编译到 lib/
 ```
 
-- 测试在当前依赖线全绿：`0.1.7-alpha.1` 与 `0.2.0-rc.2` 各 79 项
+- 测试覆盖工具接通与存储行为；循环测试使用固定模型响应，不代表真实模型的记忆效果已通过评估。
+- 测试在当前依赖线全绿：`0.1.7-alpha.1` 与 `0.2.0-rc.2` 各 92 项
 - 存储层刻意直接使用 `node:fs`，因为它属于插件内部受信状态，与 settings、会话持久化同类，不走沙箱化的模型侧 `ctx.fs`
 - 代码结构：
 
@@ -426,7 +446,7 @@ MIT
 [badge-dsh]: https://img.shields.io/badge/DSH-0.1.7%20%7C%200.2.0-blue
 
 [npm-url]: https://www.npmjs.com/package/dsh-tool-user-memory
-[release-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.0
+[release-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.2
 [changelog]: CHANGELOG.md
 [readme-en]: README.en.md
 [topic]: https://github.com/topics/dsh-plugin

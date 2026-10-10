@@ -7,7 +7,22 @@
 > **Standalone open-source plugin**. Developed and maintained independently as part of the DeepSeek Harness community ecosystem, see the GitHub topic [`dsh-plugin`][topic].
 > Not affiliated with the official repository; install straight from npm and it just works.
 
-[中文][readme-zh] ｜ [Changelog][changelog] ｜ Latest **0.2.0**, see [release v0.2.0][release-url]
+[中文][readme-zh] ｜ [Changelog][changelog] ｜ Latest **0.2.2**, see [release v0.2.2][release-url]
+
+### What changed between versions?
+
+- **0.1.x**: one shared personal note with your language, style, and background.
+- **0.2.0**: separate project notes, on-demand reading, and memory retirement and tidying.
+- **0.2.1**: fixes for lost concurrent writes and content edits resetting memory age.
+- **0.2.2**: fixes for stale tidying plans overwriting new facts, retired entries reviving, reserved topic names losing content, and byte limits being exceeded.
+
+**Cross-session memory works by default. Automatic tidying is off by default; model-assisted tidying needs separate configuration.** Existing memory files require no manual migration.
+
+Upgrade, then restart your session (replace `web` with your profile):
+
+```sh
+dsh plugin --profile web add dsh-tool-user-memory@0.2.2
+```
 
 ## Contents
 
@@ -86,7 +101,7 @@ You: "Remember: I prefer concise answers"
 ### Prerequisites
 
 - A working [DeepSeek Harness][harness] with the `dsh` CLI
-- This plugin is verified on both runtime lines, **0.1.7-alpha.x** and **0.2.0-rc.x**, with 79 tests green on each
+- This plugin is verified on both runtime lines, **0.1.7-alpha.x** and **0.2.0-rc.x**, with 92 tests green on each
 - No manual npm step: `dsh plugin` installs the package for you
 
 ### One command
@@ -115,11 +130,13 @@ git clone https://github.com/IAMLieutenant/dsh-tool-user-memory.git
 cd dsh-tool-user-memory
 pnpm install --frozen-lockfile
 pnpm run build
-pnpm pack                       # produces dsh-tool-user-memory-0.2.0.tgz
-dsh plugin --profile web add ./dsh-tool-user-memory-0.2.0.tgz
+pnpm pack                       # produces dsh-tool-user-memory-0.2.2.tgz
+dsh plugin --profile web add ./dsh-tool-user-memory-0.2.2.tgz
 ```
 
 ### Configuration
+
+`promptMaxBytes` and `workspacePromptMaxBytes` cap injected memory content; explanatory prompt text is additional. A project topic body, including appended content, may be at most 16 KiB. `MEMORY` and Windows device names are reserved.
 
 Zero config by default. To tweak anything, override the `tool-user-memory` row in the profile's `cordis.patch.yml`:
 
@@ -127,10 +144,10 @@ Zero config by default. To tweak anything, override the `tool-user-memory` row i
 |---|---|---|
 | `path` | `$DSH_HOME/user-memory/user.md` | Personal profile file path |
 | `maxBytes` | `8192` | Profile file size cap; entries are evicted oldest-first when exceeded |
-| `promptMaxBytes` | `2048` | Per-turn injection budget, newest entries first; `0` injects the full profile |
+| `promptMaxBytes` | `2048` | Hard byte limit for injected profile content, newest first; oversized entries are visibly truncated, available in full via memory_get; `0` injects the full profile |
 | `includeInPrompt` | `true` | Whether to inject the profile into every session's system prompt |
 | `staleAfterDays` | `0` | Entries not updated within N days get a `[stale: last updated Nd ago]` annotation; annotation only, never a deletion; `0` disables it |
-| `workspacePromptMaxBytes` | `512` | Per-turn byte budget for the project memory index, bodies stay lazy; `0` disables project injection |
+| `workspacePromptMaxBytes` | `512` | Hard byte limit for injected project index content; bodies are read on demand; `0` disables project injection |
 | `workspaceBase` | `$DSH_HOME/user-memory/workspace` | Project memory root directory, mainly for tests or custom layouts |
 | `autoConsolidate` | `false` | Whether to tidy memory in the background at turn boundaries, debounced and never blocking |
 | `consolidateMinIntervalMs` | `600000` | Minimum interval between automatic runs; `0` means every turn boundary |
@@ -273,7 +290,7 @@ write → valid → optional: aging annotation → soft-invalidated → revivabl
 
 ### Security stance
 
-The injected profile is explicitly framed as *reference data, not instructions*. Unless you repeat something in the current message, the agent will not follow directives found inside the profile, the same stance the official `dsh-session-reference` snapshots take.
+The injected profile is framed as *reference data, not instructions*. The prompt asks the model to use preferences naturally and ignore embedded directives. This is a prompt constraint, not a guarantee of model behavior.
 
 ---
 
@@ -351,7 +368,7 @@ There are two budgets. On the injection side, `promptMaxBytes` defaults to 2048 
 
 **How do I erase everything?**
 
-Delete `$DSH_HOME/user-memory/user.md`; project memory lives under `$DSH_HOME/user-memory/workspace/`, so delete the directory you no longer want. Deleting the files is forgetting, and there is no hidden copy.
+Delete `$DSH_HOME/user-memory/user.md`; project memory lives under `$DSH_HOME/user-memory/workspace/`, so delete the directory you no longer want. To also erase the tidying history, delete `$DSH_HOME/user-memory/consolidation-log.md`.
 
 **Should I invalidate or delete?**
 
@@ -359,7 +376,7 @@ Use soft invalidation for anything superseded: the record stays, remains auditab
 
 **Could my credentials end up in there?**
 
-The tool description is a hard constraint: the agent is told never to store credentials, passwords or tokens. Content you hand-write into the profile file is of course yours to decide, and that file stays on your machine.
+The tool description tells the agent never to store credentials, passwords or tokens. The plugin does not automatically detect every secret. Do not ask it to save credentials or put them in memory files manually.
 
 **Does it need network access or extra spending?**
 
@@ -379,11 +396,12 @@ It is not. This is an independent open-source plugin in the community ecosystem,
 
 ```sh
 pnpm install
-pnpm test           # 79/79: unit + lock primitives + storage integration + project memory + consolidation + harness integration + full AgentLoop test
+pnpm test           # 92/92: unit + lock primitives + storage integration + project memory + consolidation + harness integration + full AgentLoop test
 pnpm run build      # tsc compiles to lib/
 ```
 
-- Tests are green on the current dependency lines, 79 each on `0.1.7-alpha.1` and `0.2.0-rc.2`
+- Loop tests use scripted model responses to verify integration; they do not measure real-model memory quality.
+- Tests are green on the current dependency lines, 92 each on `0.1.7-alpha.1` and `0.2.0-rc.2`
 - The storage layer deliberately uses `node:fs` directly, because it is plugin-internal trusted state like settings or session persistence, not the sandboxed model-facing `ctx.fs` seam
 - Code layout:
 
@@ -426,7 +444,7 @@ MIT
 [badge-dsh]: https://img.shields.io/badge/DSH-0.1.7%20%7C%200.2.0-blue
 
 [npm-url]: https://www.npmjs.com/package/dsh-tool-user-memory
-[release-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.0
+[release-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.2
 [changelog]: CHANGELOG.md
 [readme-zh]: README.md
 [topic]: https://github.com/topics/dsh-plugin

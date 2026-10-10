@@ -51,6 +51,128 @@ test('normalizeValue ignores case and whitespace differences', () => {
   assert.equal(normalizeValue('  Use   PNPM\nonly '), 'use pnpm only');
 });
 
+test('consolidation: workspace duplicate is retained when its merge destination disappears', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-um-topic-destination-'));
+  try {
+    const store = createMemoryStore({ path: join(dir, 'user.md'), maxBytes: 8192 });
+    const ws = await createWorkspaceMemory({ cwd: dir, baseDir: join(dir, 'base') });
+    await ws.write('a', 'same', 'set');
+    await ws.write('b', 'same', 'set');
+    const plan = planDeterministic({ entries: [], topics: await ws.list(), now: NOW });
+    const op = plan.ops.find((op) => op.op === 'topic-invalidate');
+    assert.ok(op?.op === 'topic-invalidate' && op.into);
+    await ws.write(op.into, '', 'remove');
+    const record = await applyPlan(store, ws, plan, 'manual');
+    assert.equal(record.applied.length, 0);
+    assert.equal((await ws.read(op.topic))?.invalidatedAt, '');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('consolidation: an apply with all operations skipped is reported as applied mode', () => {
+  const rendered = renderConsolidationOutcome({
+    mode: 'apply', plan: { ops: [{ op: 'rewrite', key: 'plan', value: 'old' }], notes: [] },
+    record: { at: NOW, source: 'manual', applied: [], skipped: [{ op: 'rewrite(plan)', reason: 'changed since planning' }], notes: [] },
+  });
+  assert.ok(rendered.includes('0 op(s) applied, 1 skipped'));
+  assert.ok(!rendered.includes('plan only'));
+});
+
+test('audit log retains every concurrent run and writes the header once', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-um-log-concurrent-'));
+  try {
+    const logPath = join(dir, 'log.md');
+    await Promise.all(Array.from({ length: 20 }, (_, i) => appendConsolidationLog(logPath, {
+      at: `run-${i}`, source: 'manual', applied: [], skipped: [], notes: [],
+    })));
+    const log = readFileSync(logPath, 'utf8');
+    assert.equal(log.split('# Consolidation Log').length - 1, 1);
+    for (let i = 0; i < 20; i++) assert.ok(log.includes(`## run-${i} — manual`));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('consolidation: an old rewrite plan cannot overwrite a newer user update', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-um-plan-conflict-'));
+  try {
+    const store = createMemoryStore({ path: join(dir, 'user.md'), maxBytes: 8192 });
+    await store.update('plan', 'tomorrow I ship', 'set');
+    const plan = planDeterministic({ entries: await store.list(), now: NOW });
+    await store.update('plan', 'release cancelled', 'set');
+    const record = await applyPlan(store, null, plan, 'manual');
+    assert.equal(record.applied.length, 0);
+    assert.ok(record.skipped[0]?.reason.includes('changed since'));
+    assert.equal((await store.list())[0]?.value, 'release cancelled');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('consolidation: duplicate relative dates stay retired in a single pass', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-um-duplicate-date-'));
+  try {
+    const store = createMemoryStore({ path: join(dir, 'user.md'), maxBytes: 8192 });
+    await store.update('old-plan', 'tomorrow I ship', 'set');
+    await store.update('new-plan', 'tomorrow I ship', 'set');
+    const plan = planDeterministic({ entries: await store.list(), now: NOW });
+    await applyPlan(store, null, plan, 'manual');
+    const after = await store.list();
+    assert.equal(after.filter((e) => !e.invalidatedAt).length, 1);
+    assert.equal(after.filter((e) => e.invalidatedAt).length, 1);
+    assert.ok(after.find((e) => !e.invalidatedAt)?.value.includes('(recorded '));
+    assert.equal(planDeterministic({ entries: after, now: NOW }).ops.length, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('consolidation: retirement wins over conflicting rewrites, and a content edit never revives', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-um-retirement-'));
+  try {
+    const store = createMemoryStore({ path: join(dir, 'user.md'), maxBytes: 8192 });
+    await store.update('plan', 'tomorrow I ship', 'set');
+    const record = await applyPlan(store, null, {
+      ops: [{ op: 'rewrite', key: 'plan', value: 'rewritten' }, { op: 'invalidate', key: 'plan', reason: 'cancelled' }],
+      notes: [], profileSnapshot: await store.list(),
+    }, 'manual');
+    assert.equal(record.applied.length, 1);
+    assert.equal(record.skipped.length, 1);
+    await store.rewrite('plan', 'formatting edit');
+    assert.ok((await store.list())[0]?.invalidatedAt);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('consolidation: a merge checks its destination and add cannot overwrite an existing key', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-um-merge-conflict-'));
+  try {
+    const store = createMemoryStore({ path: join(dir, 'user.md'), maxBytes: 8192 });
+    await store.update('a', 'same', 'set');
+    await store.update('b', 'same', 'set');
+    const snapshot = await store.list();
+    await store.update('b', '', 'remove');
+    const record = await applyPlan(store, null, {
+      ops: [{ op: 'merge', key: 'a', into: 'b' }, { op: 'add', key: 'a', value: 'model overwrite' }],
+      notes: [], profileSnapshot: snapshot,
+    }, 'manual');
+    assert.equal(record.applied.length, 0);
+    assert.equal(record.skipped.length, 2);
+    assert.equal((await store.list())[0]?.value, 'same');
+    assert.equal((await store.list())[0]?.invalidatedAt, '');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('consolidation: workspace invalidation cannot retire a topic updated after planning', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-um-workspace-conflict-'));
+  try {
+    const store = createMemoryStore({ path: join(dir, 'user.md'), maxBytes: 8192 });
+    const ws = await createWorkspaceMemory({ cwd: dir, baseDir: join(dir, 'base') });
+    await ws.write('a', 'same', 'set');
+    await ws.write('b', 'same', 'set');
+    const plan = planDeterministic({ entries: [], topics: await ws.list(), now: NOW });
+    const retirement = plan.ops.find((op) => op.op === 'topic-invalidate');
+    assert.ok(retirement?.op === 'topic-invalidate');
+    await ws.write(retirement.topic, 'new project instructions', 'set');
+    const record = await applyPlan(store, ws, plan, 'manual');
+    assert.equal(record.applied.length, 0);
+    assert.ok(record.skipped[0]?.reason.includes('changed since'));
+    assert.equal((await ws.read(retirement.topic))?.invalidatedAt, '');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('planDeterministic merges duplicates (newest wins) and anchors relative dates once', () => {
   const entries = [
     entry({ key: 'project', value: 'rag-service', updatedAt: '2026-05-01T00:00:00.000Z' }),

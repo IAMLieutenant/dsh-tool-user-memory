@@ -54,12 +54,38 @@ export interface MemoryStore {
   list(): Promise<ProfileEntry[]>;
   /** Sync variant used by the system-prompt variable provider. */
   listSync(): ProfileEntry[];
-  update(key: string, value: string, mode: MergeMode, invalidateReason?: string): Promise<UpdateResult>;
+  update(key: string, value: string, mode: MergeMode, invalidateReason?: string, guard?: MemoryMutationGuard): Promise<UpdateResult>;
   /**
    * Replace an entry's value WITHOUT refreshing its updatedAt. An edit is not
    * a fresh confirmation, so the entry keeps its age.
    */
-  rewrite(key: string, value: string): Promise<UpdateResult>;
+  rewrite(key: string, value: string, guard?: MemoryMutationGuard): Promise<UpdateResult>;
+}
+
+/** Checked inside the document lock, so an old plan cannot overwrite a newer fact. */
+export interface MemoryMutationGuard {
+  expected: ProfileEntry | null;
+  /** A merge may retire a source only while its destination still exists unchanged. */
+  dependency?: ProfileEntry;
+}
+
+function guardError(current: ProfileEntry[], key: string, guard?: MemoryMutationGuard): string | null {
+  if (guard === undefined) return null;
+  const actual = current.find((entry) => entry.key === key) ?? null;
+  const same = (a: ProfileEntry | null, b: ProfileEntry | null): boolean =>
+    a === null || b === null ? a === b :
+      a.key === b.key && a.value === b.value && a.updatedAt === b.updatedAt &&
+      a.invalidatedAt === b.invalidatedAt && a.invalidReason === b.invalidReason;
+  if (!same(actual, guard.expected)) {
+    return `memory '${key}' changed since the consolidation plan; skipped`;
+  }
+  if (guard.dependency !== undefined) {
+    const destination = current.find((entry) => entry.key === guard.dependency!.key) ?? null;
+    if (!same(destination, guard.dependency)) {
+      return `merge destination '${guard.dependency.key}' changed since the consolidation plan; skipped`;
+    }
+  }
+  return null;
 }
 
 export function resolveProfilePath(override?: string): string {
@@ -121,6 +147,7 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
     value: string,
     mode: MergeMode,
     invalidateReason = '',
+    guard?: MemoryMutationGuard,
   ): Promise<UpdateResult> {
     const trimmedKey = key.trim();
     const keyError = validateKey(trimmedKey);
@@ -142,6 +169,8 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
     try {
       return await withDocumentLock<UpdateResult>(`${filePath}.lock`, async () => {
         const current = parseDoc(await read());
+        const conflict = guardError(current, trimmedKey, guard);
+        if (conflict !== null) return failure(trimmedKey, mode, conflict);
         if (mode === 'invalidate' && !current.some((entry) => entry.key === trimmedKey)) {
           return {
             ok: false,
@@ -168,7 +197,7 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
    * reset the entry's age, defeating `staleAfterDays` and
    * `autoInvalidateAfterDays`.
    */
-  async function rewrite(key: string, value: string): Promise<UpdateResult> {
+  async function rewrite(key: string, value: string, guard?: MemoryMutationGuard): Promise<UpdateResult> {
     const trimmedKey = key.trim();
     const keyError = validateKey(trimmedKey);
     if (keyError) return failure(key, 'set', keyError);
@@ -179,13 +208,15 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
     try {
       return await withDocumentLock<UpdateResult>(`${filePath}.lock`, async () => {
         const current = parseDoc(await read());
+        const conflict = guardError(current, trimmedKey, guard);
+        if (conflict !== null) return failure(trimmedKey, 'set', conflict);
         const target = current.find((entry) => entry.key === trimmedKey);
         if (target === undefined) {
           return failure(trimmedKey, 'set', `key '${trimmedKey}' does not exist — nothing to rewrite`);
         }
-        const merged = mergeEntry(current, trimmedKey, value, 'set', now);
-        const index = merged.findIndex((entry) => entry.key === trimmedKey);
-        if (index >= 0) merged[index] = { ...merged[index]!, updatedAt: target.updatedAt };
+        // A content edit preserves both age and invalidation; only explicit
+        // set/append should revive a retired entry.
+        const merged = current.map((entry) => entry.key === trimmedKey ? { ...entry, value } : entry);
         return await commit(merged, trimmedKey, 'set', now);
       });
     } catch (error) {
@@ -204,6 +235,9 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
     const budget = maxBytes - Buffer.byteLength(stamp, 'utf8');
     const { kept, evicted, truncated } = evictToBudget(merged, budget);
     const finalDoc = serializeProfile(kept) + stamp;
+    if (Buffer.byteLength(finalDoc, 'utf8') > maxBytes) {
+      return failure(key, mode, 'maxBytes is too small for the profile metadata; nothing was written');
+    }
     await write(finalDoc);
     return {
       ok: true,

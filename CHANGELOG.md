@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] — 2026-10-10
+
+这次主要让记忆保存和整理更可靠；已有记忆文件不用手动迁移，工具和默认开关不变。
+
+### Fixed
+
+- **旧整理方案覆盖新内容**：整理记住规划时的原始内容，写入时在锁内核对；用户或另一会话已更新的条目会跳过，并在结果与日志中说明原因。全局画像和项目主题都受保护；合并还会核对保留的目标，避免目标消失后把剩下的记录也失效。
+- **旧记录被整理意外复活**：重复合并或失效优先于内容改写，同一轮不重复修改同一目标；日期改写保留原时间戳和失效状态。模型提议的 add/topic-add 也不能覆盖已有内容。
+- **项目主题写入成功却读不到**：禁止用内部索引名称 MEMORY（不区分大小写）作为主题名，补齐 Windows 设备名称校验；主题大小写变化时复用原文件。
+- **追加绕过 16 KiB 上限**：校验追加后的总正文，超限返回错误并保留原内容。
+- **提示词超过配置预算**：过大的最新条目按 UTF-8 字节安全截短并带标记；记忆正文遵守配置上限，完整内容仍可通过 memory_get 读取。说明文字不计入正文预算。文件侧也计算 Markdown 转义增加的字节，预算小到无法容纳元数据时拒绝写入。
+- **并发整理日志丢记录**：日志在同一把文件锁下追加，避免整份读写互相覆盖。执行时全被跳过的方案会显示实际的 applied/skipped 数量。
+
+### Changed
+
+- 中英文 README 更新到 0.2.2，增加直白的版本差异、升级方法与容量说明；明确敏感内容与提示词约束的实际边界。
+- 添加 pnpm-workspace.yaml 的 autoInstallPeers: false 项目配置，与现有锁文件一致。
+
+### Verified
+
+- 两条依赖线 0.1.7-alpha.1 与 0.2.0-rc.2 各 92/92 测试通过，TypeScript 构建通过。
+- 新增 13 项回归测试，覆盖旧方案冲突、合并目标变化、失效记录保持、主题名、追加容量、UTF-8 预算、转义开销与并发日志。
+- 循环测试使用固定模型响应，验证集成行为；未把它当作真实模型的记忆质量评估。
+
 ## [0.2.1] — 2026-10-10
 
 修掉两个 0.2.0 引入的真实缺陷，都与并发写入和时间语义有关。
@@ -144,3 +168,5 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 [0.1.2]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.1.2
 [0.1.1]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.1.1
 [0.1.0]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.1.0
+
+[0.2.2]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.2

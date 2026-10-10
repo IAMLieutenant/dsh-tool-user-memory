@@ -227,10 +227,9 @@ export function renderEntries(entries: ProfileEntry[], options: RenderOptions = 
 }
 
 /**
- * Render entries newest-first within a byte budget, never splitting an entry.
- * The newest entry is always included even if it alone exceeds the budget, so a
- * single large preference is never hidden. Returns how many entries were left
- * out, so the caller can point at the full profile.
+ * Render entries newest-first within a byte budget. Keep whole entries when
+ * they fit; visibly truncate an oversized newest entry. Return how many entries
+ * were left out so the caller can point at the full profile.
  */
 export function renderEntriesBudgeted(
   entries: ProfileEntry[],
@@ -240,6 +239,10 @@ export function renderEntriesBudgeted(
   const ordered = orderByRecency(entries.filter((entry) => !RESERVED_KEYS.has(entry.key)));
   if (ordered.length === 0) return { text: '', omitted: 0 };
   const out: ProfileEntry[] = [ordered[0]!];
+  const first = renderEntries(out, options);
+  if (byteLength(first) > maxBytes) {
+    return { text: truncateText(first, Math.max(0, maxBytes)), omitted: ordered.length - 1 };
+  }
   for (let i = 1; i < ordered.length; i += 1) {
     out.push(ordered[i]!);
     if (byteLength(renderEntries(out, options)) > maxBytes) {
@@ -293,7 +296,13 @@ export function evictToBudget(entries: ProfileEntry[], budgetBytes: number): Evi
     // the entry's fixed heading + timestamp lines.
     const fixed = byteLength(serializeProfile([{ ...entry, value: '' }])) + 1;
     const valueBudget = Math.max(0, budgetBytes - fixed);
-    kept = [{ ...entry, value: truncateValue(entry.value, valueBudget) }];
+    let available = valueBudget;
+    kept = [{ ...entry, value: truncateText(entry.value, available) }];
+    // Escaping #, < and backslash adds bytes to the persisted representation.
+    while (byteLength(serializeProfile(kept)) > budgetBytes && available > 0) {
+      available = Math.max(0, available - (byteLength(serializeProfile(kept)) - budgetBytes));
+      kept = [{ ...entry, value: truncateText(entry.value, available) }];
+    }
     truncated = entry.key;
   }
 
@@ -301,12 +310,12 @@ export function evictToBudget(entries: ProfileEntry[], budgetBytes: number): Evi
 }
 
 /** Head-truncate a value to `maxBytes` with a visible marker. */
-function truncateValue(value: string, maxBytes: number): string {
+export function truncateText(value: string, maxBytes: number): string {
   const marker = '… [truncated]';
   if (maxBytes <= 0) return '';
   if (byteLength(value) <= maxBytes) return value;
   const budget = maxBytes - byteLength(marker);
-  if (budget <= 0) return marker.slice(0, maxBytes);
+  if (budget <= 0) return takeChars(marker, maxBytes);
   return takeChars(value, budget) + marker;
 }
 

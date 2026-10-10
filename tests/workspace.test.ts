@@ -64,6 +64,45 @@ test('normalizeTopic rejects unsafe names and normalizes inner whitespace', () =
   assert.equal(normalizeTopic('a:b').ok, false);
   assert.equal(normalizeTopic('.hidden').ok, false);
   assert.equal(normalizeTopic('x'.repeat(65)).ok, false);
+  for (const name of ['MEMORY', 'memory', 'Memory', 'CON', 'nul', 'COM1', 'aux.notes', 'trailing.']) {
+    assert.equal(normalizeTopic(name).ok, false, name);
+  }
+});
+
+test('workspace: reserved index name cannot report a successful lost write', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-um-reserved-'));
+  try {
+    const ws = await createWorkspaceMemory({ cwd: dir, baseDir: join(dir, 'base') });
+    await ws.write('build', 'pnpm', 'set');
+    const before = await ws.indexText();
+    assert.equal((await ws.write('MEMORY', 'must not disappear', 'set')).ok, false);
+    assert.equal(await ws.indexText(), before);
+    assert.equal((await ws.read('build'))?.body, 'pnpm');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('workspace: append checks the combined body and leaves the old topic unchanged', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-um-append-limit-'));
+  try {
+    const ws = await createWorkspaceMemory({ cwd: dir, baseDir: join(dir, 'base') });
+    const body = '中'.repeat(4000);
+    assert.equal((await ws.write('large', body, 'set')).ok, true);
+    assert.equal((await ws.write('large', body, 'append')).ok, false);
+    assert.equal((await ws.read('large'))?.body, body);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('workspace: changing topic case reuses the existing file for edits and deletion', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-um-topic-case-'));
+  try {
+    const ws = await createWorkspaceMemory({ cwd: dir, baseDir: join(dir, 'base') });
+    await ws.write('Build', 'pnpm', 'set');
+    await ws.write('build', 'test', 'append');
+    assert.equal((await ws.list()).length, 1);
+    assert.equal((await ws.read('BUILD'))?.body, 'pnpm\ntest');
+    assert.equal((await ws.write('BUILD', '', 'remove')).ok, true);
+    assert.equal((await ws.list()).length, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('buildIndexText lists valid topics newest first with a summary line', () => {

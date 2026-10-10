@@ -197,6 +197,7 @@ export function apply(ctx: Context, config: UserMemoryConfig): void {
     if (request.mode === 'plan') {
       return {
         plan,
+        mode: request.mode,
         record: {
           at: now,
           source: request.source,
@@ -218,7 +219,7 @@ export function apply(ctx: Context, config: UserMemoryConfig): void {
     );
     // The log is the audit trail; a log failure must not undo memory writes.
     await appendConsolidationLog(logPath, record).catch(() => undefined);
-    return { plan, record, ...(modelError === undefined ? {} : { modelError }) };
+    return { plan, record, mode: request.mode, ...(modelError === undefined ? {} : { modelError }) };
   }
 
   registerMemoryTools(ctx, store, { staleAfterDays, workspaceBase, consolidate });

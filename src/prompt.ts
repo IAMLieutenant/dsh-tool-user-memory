@@ -18,7 +18,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis';
-import { renderEntries, renderEntriesBudgeted } from './profile.ts';
+import { renderEntries, renderEntriesBudgeted, truncateText } from './profile.ts';
 import type { MemoryStore } from './store.ts';
 import { readWorkspaceIndexSync } from './workspace.ts';
 
@@ -27,6 +27,7 @@ function budgetText(text: string, maxBytes: number): string {
   if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
   const lines = text.split('\n');
   const first = lines[0] ?? '';
+  if (Buffer.byteLength(first, 'utf8') > maxBytes) return truncateText(first, maxBytes);
   const out: string[] = [first];
   let bytes = Buffer.byteLength(first, 'utf8') + 1;
   for (let i = 1; i < lines.length; i += 1) {
@@ -88,6 +89,9 @@ export function registerProfilePrompt(
           '',
           `(${global.omitted} more preference entries exist — call memory_get for the full profile.)`,
         );
+      }
+      if (global.text.includes('[truncated]')) {
+        parts.push('', '(A large preference was truncated for this prompt — call memory_get for the full content.)');
       }
       parts.push('', global.text);
     }

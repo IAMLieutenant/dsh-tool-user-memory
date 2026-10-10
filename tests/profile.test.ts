@@ -142,6 +142,22 @@ test('RESERVED_KEYS contains updated-at', () => {
   assert.ok(RESERVED_KEYS.has('updated-at'));
 });
 
+test('prompt budget is a hard UTF-8 limit, including tiny budgets and oversized entries', () => {
+  const entries = [{ key: 'large', value: '中文🙂'.repeat(2000), updatedAt: T3, invalidatedAt: '', invalidReason: '' }];
+  for (const budget of [0, 1, 2, 3, 10, 120, 2048]) {
+    const { text } = renderEntriesBudgeted(entries, budget);
+    assert.ok(Buffer.byteLength(text, 'utf8') <= budget);
+    assert.ok(!text.includes('\uFFFD'));
+  }
+  assert.ok(renderEntriesBudgeted(entries, 2048).text.includes('[truncated]'));
+});
+
+test('profile eviction accounts for the extra bytes from Markdown escaping', () => {
+  const entries = [{ key: 'large', value: '# line\n<line\n\\line\n'.repeat(1000), updatedAt: T3, invalidatedAt: '', invalidReason: '' }];
+  const { kept } = evictToBudget(entries, 200);
+  assert.ok(Buffer.byteLength(serializeProfile(kept), 'utf8') <= 200);
+});
+
 const INV = '2026-09-01T00:00:00.000Z';
 
 test('mergeEntry: invalidate soft-deletes with reason; set revives', () => {

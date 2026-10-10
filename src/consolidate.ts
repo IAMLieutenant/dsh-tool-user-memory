@@ -19,8 +19,9 @@
 import { promises as fsp } from 'node:fs';
 import * as nodePath from 'node:path';
 import type { ProfileEntry } from './profile.ts';
-import type { MemoryStore } from './store.ts';
+import type { MemoryStore, MemoryMutationGuard } from './store.ts';
 import type { WorkspaceMemory, WorkspaceTopic } from './workspace.ts';
+import { withDocumentLock } from './lock.ts';
 
 export type ConsolidationOp =
   | { op: 'add'; key: string; value: string }
@@ -28,12 +29,15 @@ export type ConsolidationOp =
   | { op: 'invalidate'; key: string; reason: string }
   | { op: 'merge'; key: string; into: string; reason?: string }
   | { op: 'topic-add'; topic: string; body: string }
-  | { op: 'topic-invalidate'; topic: string; reason: string };
+  | { op: 'topic-invalidate'; topic: string; reason: string; into?: string };
 
 export interface ConsolidationPlan {
   ops: ConsolidationOp[];
   /** What was considered but not turned into an op (aging candidates, …). */
   notes: string[];
+  /** Original facts used to plan; every write checks its target under the lock. */
+  profileSnapshot?: ProfileEntry[];
+  workspaceSnapshot?: WorkspaceTopic[];
 }
 
 export interface ConsolidationRecord {
@@ -128,7 +132,9 @@ export function planDeterministic(input: DeterministicInput): ConsolidationPlan 
   }
 
   // 2. relative-time anchoring (append once, never rewrite the user's own words)
+  const retired = new Set(ops.filter((op) => op.op === 'merge').map((op) => op.key));
   for (const entry of valid) {
+    if (retired.has(entry.key)) continue;
     if (!RELATIVE_TIME.test(entry.value)) continue;
     if (entry.value.includes(ANCHOR_MARK)) continue;
     ops.push({
@@ -174,12 +180,13 @@ export function planDeterministic(input: DeterministicInput): ConsolidationPlan 
       ops.push({
         op: 'topic-invalidate',
         topic: topic.topic,
+        into: keep.topic,
         reason: `same content as topic '${keep.topic}'`,
       });
     }
   }
 
-  return { ops, notes };
+  return { ops, notes, profileSnapshot: input.entries.map((entry) => ({ ...entry })), workspaceSnapshot: (input.topics ?? []).map((topic) => ({ ...topic })) };
 }
 
 /** The one place ops turn into writes. Never throws: failures land in `skipped`. */
@@ -198,13 +205,33 @@ export async function applyPlan(
     skipped: [],
     notes: plan.notes,
   };
-  for (const op of plan.ops) {
+  const entries = plan.profileSnapshot ?? await store.list();
+  const topics = plan.workspaceSnapshot ?? (ws === null ? [] : await ws.list());
+  const guardFor = (key: string): MemoryMutationGuard => ({ expected: entries.find((entry) => entry.key === key) ?? null });
+  const priority = (op: ConsolidationOp): number =>
+    op.op === 'invalidate' || op.op === 'merge' || op.op === 'topic-invalidate' ? 0 : 1;
+  const retiring = new Set(plan.ops.filter((op) => op.op === 'invalidate' || op.op === 'merge').map((op) => op.key));
+  const retiringTopics = new Set(plan.ops.filter((op) => op.op === 'topic-invalidate').map((op) => op.topic.toLowerCase()));
+  const touched = new Set<string>();
+  // Retirement wins over content edits. A plan may mutate each target once;
+  // conflicting model proposals are skipped rather than silently undoing an op.
+  for (const op of plan.ops.slice().sort((a, b) => priority(a) - priority(b))) {
     const fail = async (reason: string): Promise<void> => {
       record.skipped.push({ op: describeOp(op), reason });
     };
+    const target = 'key' in op ? `global:${op.key}` : `workspace:${op.topic.toLowerCase()}`;
+    if (touched.has(target)) {
+      await fail('conflicting operation for a target already changed by this plan');
+      continue;
+    }
+    const appliedBefore = record.applied.length;
     switch (op.op) {
       case 'add': {
-        const result = await store.update(op.key, op.value, 'set');
+        if (entries.some((entry) => entry.key === op.key)) {
+          await fail('add requires a new key; use rewrite to edit an existing memory');
+          break;
+        }
+        const result = await store.update(op.key, op.value, 'set', '', guardFor(op.key));
         if (result.ok) record.applied.push(op);
         else await fail(result.error ?? 'update rejected');
         break;
@@ -213,7 +240,7 @@ export async function applyPlan(
         // A content edit must not refresh the entry's timestamp: doing so would
         // reset its age and silently defeat staleAfterDays and
         // autoInvalidateAfterDays.
-        const result = await store.rewrite(op.key, op.value);
+        const result = await store.rewrite(op.key, op.value, guardFor(op.key));
         if (result.ok) record.applied.push(op);
         else await fail(result.error ?? 'rewrite rejected');
         break;
@@ -221,7 +248,16 @@ export async function applyPlan(
       case 'invalidate':
       case 'merge': {
         const reason = op.op === 'merge' ? (op.reason ?? `merged into '${op.into}'`) : op.reason;
-        const result = await store.update(op.key, '', 'invalidate', reason);
+        const guard = guardFor(op.key);
+        if (op.op === 'merge') {
+          const destination = entries.find((entry) => entry.key === op.into);
+          if (destination === undefined || destination.invalidatedAt !== '' || retiring.has(op.into)) {
+            await fail('merge destination must be an existing valid entry kept by this plan');
+            break;
+          }
+          guard.dependency = destination;
+        }
+        const result = await store.update(op.key, '', 'invalidate', reason, guard);
         if (result.ok) record.applied.push(op);
         else await fail(result.error ?? 'invalidate rejected');
         break;
@@ -231,7 +267,11 @@ export async function applyPlan(
           await fail('no workspace memory for this session');
           break;
         }
-        const result = await ws.write(op.topic, op.body, 'set');
+        if (topics.some((topic) => topic.topic.toLowerCase() === op.topic.toLowerCase())) {
+          await fail('topic-add requires a new topic');
+          break;
+        }
+        const result = await ws.write(op.topic, op.body, 'set', '', null);
         if (result.ok) record.applied.push(op);
         else await fail(result.error ?? 'topic write rejected');
         break;
@@ -241,12 +281,19 @@ export async function applyPlan(
           await fail('no workspace memory for this session');
           break;
         }
-        const result = await ws.write(op.topic, '', 'invalidate', op.reason);
+        const expected = topics.find((topic) => topic.topic.toLowerCase() === op.topic.toLowerCase()) ?? null;
+        const destination = op.into === undefined ? undefined : topics.find((topic) => topic.topic === op.into);
+        if (op.into !== undefined && (destination === undefined || destination.invalidatedAt !== '' || retiringTopics.has(op.into.toLowerCase()))) {
+          await fail('merge destination must be an existing valid topic kept by this plan');
+          break;
+        }
+        const result = await ws.write(op.topic, '', 'invalidate', op.reason, expected, destination);
         if (result.ok) record.applied.push(op);
         else await fail(result.error ?? 'topic invalidate rejected');
         break;
       }
     }
+    if (record.applied.length > appliedBefore) touched.add(target);
   }
   return record;
 }
@@ -300,15 +347,16 @@ export async function appendConsolidationLog(
   for (const note of record.notes) lines.push(`- note: ${note}`);
   lines.push('');
 
-  await fsp.mkdir(nodePath.dirname(logPath), { recursive: true, mode: 0o700 });
-  let existing = '';
-  try {
-    existing = await fsp.readFile(logPath, 'utf8');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-  }
-  const body = existing === '' ? CONSOLIDATION_LOG_HEADER : existing;
-  await fsp.writeFile(logPath, `${body}${lines.join('\n')}`, { encoding: 'utf8', mode: 0o600 });
+  await withDocumentLock(`${logPath}.lock`, async () => {
+    let size = 0;
+    try {
+      size = (await fsp.stat(logPath)).size;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const header = size === 0 ? CONSOLIDATION_LOG_HEADER : '';
+    await fsp.appendFile(logPath, `${header}${lines.join('\n')}`, { encoding: 'utf8', mode: 0o600 });
+  });
 }
 
 /** Messaging shape of the consolidation model call (structural; no dsh-llm import). */
@@ -500,6 +548,7 @@ export interface ConsolidateOutcome {
   record: ConsolidationRecord;
   /** Why the model-assisted layer contributed nothing, when it did not. */
   modelError?: string;
+  mode?: 'plan' | 'apply';
 }
 
 /** Implemented by the plugin's composition root; injected into the tools. */
@@ -508,12 +557,13 @@ export type ConsolidateRunner = (request: ConsolidateRequest) => Promise<Consoli
 /** Model-facing summary of one consolidation outcome. */
 export function renderConsolidationOutcome(outcome: ConsolidateOutcome): string {
   const { plan, record } = outcome;
+  const performed = outcome.mode === 'apply' || record.applied.length > 0 || record.skipped.length > 0;
   const head =
-    record.applied.length > 0
+    performed
       ? `memory consolidation: ${record.applied.length} op(s) applied, ${record.skipped.length} skipped`
       : `${plan.ops.length} op(s) proposed (plan only — pass mode=apply to perform them)`;
   const lines = [head];
-  if (record.applied.length > 0) {
+  if (performed) {
     for (const op of record.applied) {
       const reason = 'reason' in op && op.reason !== undefined && op.reason !== '' ? ` — ${op.reason}` : '';
       lines.push(`  • ${describeOp(op)}${reason}`);

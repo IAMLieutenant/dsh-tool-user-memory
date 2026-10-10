@@ -281,8 +281,9 @@ v2 路线基于 2026-10 对 OpenAI（Dreaming）、Claude Code（自动记忆分
 
 - ✅ **时间语义**（0.2.0 已实现）：软失效（`mode=invalidate` + `reason`，保留历史不删除）+ 老化配置 `staleAfterDays` + `memory_get(includeStale)` 审计，让记忆「随时间保持正确」（对照 OpenAI 三轴：事实回忆 / 偏好遵循 / 时间正确）
 - ✅ **记忆分层**（0.2.0 已实现）：全局画像 + 工作区级记忆（索引 + 主题文件，懒加载，对齐 Claude Code auto-memory 结构）；工作区身份 = `sha256(realpath(cwd))`，按会话 `cwd` 自动归属
-- ✅ **`memory_search`**（0.2.0 已实现）：文件检索优先（关键词 + 评分 + 一行摘要）；向量召回仅在条目量级很大（> ~500）时才值得引入（Letta 基准：个人规模下纯文件检索已超过 Mem0 图方案）
+- ✅ **`memory_search`**（0.2.0 已实现）：文件检索优先（关键词 + 评分 + 一行摘要）；向量召回仅在条目量级很大（> ~500）时才值得引入（Letta 基准：个人规模下纯文件检索已超过 Mem0 图方案）（[跟踪 issue #4](https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/4)）
 - ✅ **后台巩固（"dreaming"）**（0.2.0 已实现）：**回合边界**异步触发（可开关、可去抖，不阻塞回合）+ 手动 `memory_consolidate`；确定性规则（合并重复 / 相对时间锚定 / 老化失效）打底，可选模型辅助（`consolidateProvider` + `consolidateModel`）提出 ops 并逐条校验；全程写入可审计的 `consolidation-log.md`。**尚未做**：会话空闲 / 定时（`schedule` 子系统）触发（[跟踪 issue #2](https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/2)）
+- **复盘式巩固（按会话摘要）**：用 subagent 读「当前画像 + 会话摘要」产出结构化 diff——语义级收敛（同义不同措辞的合并、从对话里提炼新偏好）与「每会话一次 / 短对话跳过 / 预算软上限」，是当前确定性规则的补充（[跟踪 issue #5](https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/5)）
 - 多用户画像（按会话身份分文件）
 
 ---

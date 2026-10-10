@@ -1,7 +1,7 @@
 {
   "name": "dsh-tool-user-memory",
-  "version": "0.2.0",
-  "description": "User preference memory for DeepSeek Harness: persisted user profile with memory_get/memory_update tools and system-prompt injection",
+  "version": "0.2.1",
+  "description": "User preference memory for DeepSeek Harness: a global profile plus per-project memory, five memory tools, soft invalidation with aging, and background consolidation with an audit log",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createMemoryStore } from '../src/store.ts';
@@ -170,6 +171,67 @@ test('store: invalidating an unknown key fails cleanly', async () => {
     assert.equal(result.ok, false);
     assert.ok(result.error?.includes('does not exist'));
     assert.equal(await store.read(), '');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('store: every concurrent update survives', async () => {
+  const dir = tempDir();
+  try {
+    const file = join(dir, 'user.md');
+    const store = createMemoryStore({ path: file, maxBytes: 65536 });
+    await store.update('seed', 'x', 'set');
+    const results = await Promise.all(
+      Array.from({ length: 20 }, (_, i) => store.update(`k${i}`, `v${i}`, 'set')),
+    );
+    assert.ok(
+      results.every((result) => result.ok),
+      'every concurrent writer is told it succeeded',
+    );
+    const keys = (await store.list()).map((entry) => entry.key);
+    assert.equal(keys.length, 21, 'the seed plus twenty concurrent entries');
+    for (let i = 0; i < 20; i += 1) assert.ok(keys.includes(`k${i}`), `k${i} survived`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('store: rewrite edits a value without refreshing its timestamp', async () => {
+  const dir = tempDir();
+  try {
+    const file = join(dir, 'user.md');
+    const store = createMemoryStore({ path: file, maxBytes: 8192 });
+    await store.update('plan', 'tomorrow I ship the release', 'set');
+    const before = (await store.list())[0]!;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const result = await store.rewrite('plan', `${before.value}\n(recorded 2026-01-01; relative dates refer to this date)`);
+    assert.equal(result.ok, true);
+    const after = (await store.list())[0]!;
+    assert.equal(after.updatedAt, before.updatedAt, 'an edit is not a fresh confirmation');
+    assert.ok(after.value.includes('(recorded '));
+    const missing = await store.rewrite('ghost', 'x');
+    assert.equal(missing.ok, false);
+    assert.ok(missing.error?.includes('does not exist'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('store: an abandoned lock file is reclaimed instead of blocking forever', async () => {
+  const dir = tempDir();
+  try {
+    const file = join(dir, 'user.md');
+    const store = createMemoryStore({ path: file, maxBytes: 8192 });
+    await writeFile(`${file}.lock`, '99999 2026-01-01T00:00:00.000Z\n', 'utf8');
+    const past = new Date(Date.now() - 60_000);
+    await utimes(`${file}.lock`, past, past);
+    const result = await store.update('after-crash', 'v', 'set');
+    assert.equal(result.ok, true, 'the stale lock is reclaimed');
+    assert.deepEqual(
+      (await store.list()).map((entry) => entry.key),
+      ['after-crash'],
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

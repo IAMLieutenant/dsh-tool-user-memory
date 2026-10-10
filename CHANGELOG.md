@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] — 2026-10-10
+
+修掉两个 0.2.0 引入的真实缺陷，都与并发写入和时间语义有关。
+
+### Fixed
+
+- **并发写入会静默丢数据**：`memory_update` 与工作区主题写入都是「读、改、写」三步，没有互斥。两个会话同时写入时，双方都收到成功，但后写的整份文档覆盖先写的，先写的那条消失。现在两道锁：进程内按锁路径串行，跨进程用 `wx` 独占创建的锁文件，释放时删除；锁文件超过 30 秒视为持有进程已死，自动回收。
+- **整理的时间锚定会把条目年龄归零**：给「明天 / 下周」这类相对时间补绝对日期时走的是 `set` 语义，会刷新 `updatedAt`。后果是这条记忆不再被判为陈旧，`autoInvalidateAfterDays` 也永远追不上它，一次纯内容编辑反而废掉了老化机制。现在新增 `store.rewrite()`：只改内容，保留原时间戳。整理里的 `rewrite` 走这条路径，`add` 仍然打当前时间。
+- 写入失败不再只是抛异常，改为返回结构化错误，方便工具把原因回给模型。
+
+### Changed
+
+- 包描述更新到现状：五个工具、分层记忆、时间语义、后台整理。
+
+### Verified
+
+- 79/79 测试通过，两条依赖线各跑一遍：`0.1.7-alpha.1` 与 `0.2.0-rc.2`。
+- 新增 11 个测试：6 个锁原语测试、3 个存储测试、1 个工作区并发测试、1 个整理测试。
+- 两条缺陷在修复前都在本机复现过：20 路并发从「丢 1 条」变为「全存活」，时间锚定从「时间戳归零」变为「时间戳保留且锚注写入」。
+
 ## [0.2.0] — 2026-10-09
 
 适配 DSH 0.1.7 / 0.2.0-rc 版本线（2026-08-17 之后的全部运行时演进）。
@@ -119,6 +139,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A brand-new session answered from the injected `{{user_profile}}` without
   calling any tool.
 
+[0.2.1]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.1
 [0.2.0]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.0
 [0.1.2]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.1.2
 [0.1.1]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.1.1

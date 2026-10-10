@@ -26,6 +26,7 @@ import { createHash } from 'node:crypto';
 import { promises as fsp, readFileSync, realpathSync, readdirSync } from 'node:fs';
 import * as nodePath from 'node:path';
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths';
+import { withDocumentLock } from './lock.ts';
 
 /**
  * Canonicalize a directory path: `..`/trailing slashes/symlinks resolved, and
@@ -432,49 +433,56 @@ export async function createWorkspaceMemory(options: WorkspaceMemoryOptions): Pr
           error: `topic body exceeds ${TOPIC_MAX_BYTES} bytes`,
         };
       }
-      const topics = await listAsync(dir);
-      const index = topics.findIndex((t) => t.topic === normalized || t.topic.toLowerCase() === normalized.toLowerCase());
       const file = nodePath.join(dir, `${normalized}.md`);
       const now = new Date().toISOString();
       try {
-        await fsp.mkdir(dir, { recursive: true, mode: 0o700 });
-        if (mode === 'remove') {
-          if (index >= 0) await fsp.unlink(file);
-          await rebuildIndex(topics.filter((_, i) => i !== index));
-          return { ok: true, topic: normalized, mode };
-        }
-        if (mode === 'invalidate') {
-          if (index < 0) {
-            return { ok: false, topic, mode, error: `topic '${normalized}' does not exist — nothing to invalidate` };
+        // One lock per workspace directory: a topic write also rebuilds the
+        // shared MEMORY.md index, so serialization is per directory rather than
+        // per topic file. The lock lives in that directory and is not a `.md`
+        // file, so topic scanning ignores it.
+        return await withDocumentLock<TopicWriteResult>(nodePath.join(dir, '.lock'), async () => {
+          const topics = await listAsync(dir);
+          const index = topics.findIndex(
+            (t) => t.topic === normalized || t.topic.toLowerCase() === normalized.toLowerCase(),
+          );
+          if (mode === 'remove') {
+            if (index >= 0) await fsp.unlink(file);
+            await rebuildIndex(topics.filter((_, i) => i !== index));
+            return { ok: true, topic: normalized, mode };
           }
-          const target = topics[index]!;
+          if (mode === 'invalidate') {
+            if (index < 0) {
+              return { ok: false, topic, mode, error: `topic '${normalized}' does not exist — nothing to invalidate` };
+            }
+            const target = topics[index]!;
+            const updated: WorkspaceTopic = {
+              ...target,
+              invalidatedAt: now,
+              invalidReason: invalidateReason.split(/\r?\n/)[0]!.trim().slice(0, 200),
+            };
+            await atomicWrite(dir, file, serializeTopicFile(updated));
+            await rebuildIndex(topics.map((t, i) => (i === index ? updated : t)));
+            return { ok: true, topic: normalized, mode };
+          }
+          const existing = index >= 0 ? topics[index]! : null;
+          const mergedBody =
+            mode === 'append' && existing !== null && existing.body !== ''
+              ? `${existing.body}\n${body}`
+              : body;
           const updated: WorkspaceTopic = {
-            ...target,
-            invalidatedAt: now,
-            invalidReason: invalidateReason.split(/\r?\n/)[0]!.trim().slice(0, 200),
+            topic: normalized,
+            body: mergedBody,
+            updatedAt: now,
+            invalidatedAt: '',
+            invalidReason: '',
           };
           await atomicWrite(dir, file, serializeTopicFile(updated));
-          await rebuildIndex(topics.map((t, i) => (i === index ? updated : t)));
+          const next = topics.slice();
+          if (index >= 0) next[index] = updated;
+          else next.push(updated);
+          await rebuildIndex(next);
           return { ok: true, topic: normalized, mode };
-        }
-        const existing = index >= 0 ? topics[index]! : null;
-        const mergedBody =
-          mode === 'append' && existing !== null && existing.body !== ''
-            ? `${existing.body}\n${body}`
-            : body;
-        const updated: WorkspaceTopic = {
-          topic: normalized,
-          body: mergedBody,
-          updatedAt: now,
-          invalidatedAt: '',
-          invalidReason: '',
-        };
-        await atomicWrite(dir, file, serializeTopicFile(updated));
-        const next = topics.slice();
-        if (index >= 0) next[index] = updated;
-        else next.push(updated);
-        await rebuildIndex(next);
-        return { ok: true, topic: normalized, mode };
+        });
       } catch (error) {
         return { ok: false, topic, mode, error: String((error as Error).message ?? error) };
       }

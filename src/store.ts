@@ -11,6 +11,7 @@
 import { promises as fsp, readFileSync } from 'node:fs';
 import * as nodePath from 'node:path';
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths';
+import { withDocumentLock } from './lock.ts';
 import {
   RESERVED_KEYS,
   evictToBudget,
@@ -54,6 +55,11 @@ export interface MemoryStore {
   /** Sync variant used by the system-prompt variable provider. */
   listSync(): ProfileEntry[];
   update(key: string, value: string, mode: MergeMode, invalidateReason?: string): Promise<UpdateResult>;
+  /**
+   * Replace an entry's value WITHOUT refreshing its updatedAt. An edit is not
+   * a fresh confirmation, so the entry keeps its age.
+   */
+  rewrite(key: string, value: string): Promise<UpdateResult>;
 }
 
 export function resolveProfilePath(override?: string): string {
@@ -133,19 +139,67 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
       };
     }
     const now = new Date().toISOString();
-    const current = parseDoc(await read());
-    if (mode === 'invalidate' && !current.some((entry) => entry.key === trimmedKey)) {
-      return {
-        ok: false,
-        key: trimmedKey,
-        mode,
-        bytes: 0,
-        evicted: [],
-        truncated: null,
-        error: `key '${trimmedKey}' does not exist — nothing to invalidate`,
-      };
+    try {
+      return await withDocumentLock<UpdateResult>(`${filePath}.lock`, async () => {
+        const current = parseDoc(await read());
+        if (mode === 'invalidate' && !current.some((entry) => entry.key === trimmedKey)) {
+          return {
+            ok: false,
+            key: trimmedKey,
+            mode,
+            bytes: 0,
+            evicted: [],
+            truncated: null,
+            error: `key '${trimmedKey}' does not exist — nothing to invalidate`,
+          };
+        }
+        const merged = mergeEntry(current, trimmedKey, value, mode, now, invalidateReason);
+        return await commit(merged, trimmedKey, mode, now);
+      });
+    } catch (error) {
+      return failure(trimmedKey, mode, `write failed: ${describeError(error)}`);
     }
-    const merged = mergeEntry(current, trimmedKey, value, mode, now, invalidateReason);
+  }
+
+  /**
+   * Replace one entry's value WITHOUT refreshing its timestamp. Consolidation
+   * uses this for content edits such as anchoring a relative date: an edit is
+   * not a fresh confirmation, and letting it refresh `updatedAt` would silently
+   * reset the entry's age, defeating `staleAfterDays` and
+   * `autoInvalidateAfterDays`.
+   */
+  async function rewrite(key: string, value: string): Promise<UpdateResult> {
+    const trimmedKey = key.trim();
+    const keyError = validateKey(trimmedKey);
+    if (keyError) return failure(key, 'set', keyError);
+    if (RESERVED_KEYS.has(trimmedKey)) {
+      return failure(key, 'set', `key '${trimmedKey}' is reserved`);
+    }
+    const now = new Date().toISOString();
+    try {
+      return await withDocumentLock<UpdateResult>(`${filePath}.lock`, async () => {
+        const current = parseDoc(await read());
+        const target = current.find((entry) => entry.key === trimmedKey);
+        if (target === undefined) {
+          return failure(trimmedKey, 'set', `key '${trimmedKey}' does not exist — nothing to rewrite`);
+        }
+        const merged = mergeEntry(current, trimmedKey, value, 'set', now);
+        const index = merged.findIndex((entry) => entry.key === trimmedKey);
+        if (index >= 0) merged[index] = { ...merged[index]!, updatedAt: target.updatedAt };
+        return await commit(merged, trimmedKey, 'set', now);
+      });
+    } catch (error) {
+      return failure(trimmedKey, 'set', `write failed: ${describeError(error)}`);
+    }
+  }
+
+  /** Apply the byte budget and write the document; shared by update and rewrite. */
+  async function commit(
+    merged: ProfileEntry[],
+    key: string,
+    mode: MergeMode,
+    now: string,
+  ): Promise<UpdateResult> {
     const stamp = `\n## updated-at\n${now}\n`;
     const budget = maxBytes - Buffer.byteLength(stamp, 'utf8');
     const { kept, evicted, truncated } = evictToBudget(merged, budget);
@@ -153,7 +207,7 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
     await write(finalDoc);
     return {
       ok: true,
-      key: trimmedKey,
+      key,
       mode,
       bytes: Buffer.byteLength(finalDoc, 'utf8'),
       evicted,
@@ -161,5 +215,14 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
     };
   }
 
-  return { path: () => filePath, read, readSync, list, listSync, update };
+  return { path: () => filePath, read, readSync, list, listSync, update, rewrite };
+}
+
+/** One structured failure shape, so every rejection path reports identically. */
+function failure(key: string, mode: MergeMode, error: string): UpdateResult {
+  return { ok: false, key, mode, bytes: 0, evicted: [], truncated: null, error };
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

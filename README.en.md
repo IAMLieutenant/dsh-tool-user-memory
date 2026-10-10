@@ -86,7 +86,7 @@ You: "Remember: I prefer concise answers"
 ### Prerequisites
 
 - A working [DeepSeek Harness][harness] with the `dsh` CLI
-- This plugin is verified on both runtime lines, **0.1.7-alpha.x** and **0.2.0-rc.x**, with 68 tests green on each
+- This plugin is verified on both runtime lines, **0.1.7-alpha.x** and **0.2.0-rc.x**, with 79 tests green on each
 - No manual npm step: `dsh plugin` installs the package for you
 
 ### One command
@@ -379,11 +379,11 @@ It is not. This is an independent open-source plugin in the community ecosystem,
 
 ```sh
 pnpm install
-pnpm test           # 68/68: unit + storage integration + project memory + consolidation + harness integration + full AgentLoop test
+pnpm test           # 79/79: unit + lock primitives + storage integration + project memory + consolidation + harness integration + full AgentLoop test
 pnpm run build      # tsc compiles to lib/
 ```
 
-- Tests are green on the current dependency lines, 68 each on `0.1.7-alpha.1` and `0.2.0-rc.2`
+- Tests are green on the current dependency lines, 79 each on `0.1.7-alpha.1` and `0.2.0-rc.2`
 - The storage layer deliberately uses `node:fs` directly, because it is plugin-internal trusted state like settings or session persistence, not the sandboxed model-facing `ctx.fs` seam
 - Code layout:
 
@@ -391,7 +391,8 @@ pnpm run build      # tsc compiles to lib/
 |---|---|
 | `src/index.ts` | The plugin itself: config, wiring, turn-boundary trigger |
 | `src/profile.ts` | Pure document model of the personal profile: parse, serialize, merge, evict, render, freshness annotation |
-| `src/store.ts` | Atomic-write store for the personal profile, including budget eviction |
+| `src/store.ts` | Atomic-write store for the personal profile, including budget eviction and timestamp-preserving rewrites |
+| `src/lock.ts` | Read-modify-write protection: in-process serialization plus a cross-process lock file |
 | `src/workspace.ts` | Project memory layer: topic files, index rebuild, keyword search |
 | `src/consolidate.ts` | Background tidying: deterministic rules, model-proposal parsing, apply and audit log |
 | `src/tools.ts` | The five model-facing tools |

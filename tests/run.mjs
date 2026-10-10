@@ -16,6 +16,7 @@ const files =
     ? values.files
     : [
         'tests/profile.test.ts',
+        'tests/lock.test.ts',
         'tests/store.test.ts',
         'tests/workspace.test.ts',
         'tests/consolidate.test.ts',

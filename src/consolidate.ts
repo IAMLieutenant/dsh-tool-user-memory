@@ -203,11 +203,19 @@ export async function applyPlan(
       record.skipped.push({ op: describeOp(op), reason });
     };
     switch (op.op) {
-      case 'add':
-      case 'rewrite': {
+      case 'add': {
         const result = await store.update(op.key, op.value, 'set');
         if (result.ok) record.applied.push(op);
         else await fail(result.error ?? 'update rejected');
+        break;
+      }
+      case 'rewrite': {
+        // A content edit must not refresh the entry's timestamp: doing so would
+        // reset its age and silently defeat staleAfterDays and
+        // autoInvalidateAfterDays.
+        const result = await store.rewrite(op.key, op.value);
+        if (result.ok) record.applied.push(op);
+        else await fail(result.error ?? 'rewrite rejected');
         break;
       }
       case 'invalidate':

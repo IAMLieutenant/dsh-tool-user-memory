@@ -86,7 +86,7 @@
 ### 前置条件
 
 - 已安装并跑通 [DeepSeek Harness][harness]，即 `dsh` CLI
-- 本插件已在 **0.1.7-alpha.x** 与 **0.2.0-rc.x** 两条运行时线上验证：每条线各 68 项测试全绿
+- 本插件已在 **0.1.7-alpha.x** 与 **0.2.0-rc.x** 两条运行时线上验证：每条线各 79 项测试全绿
 - 无需单独安装 npm 包，`dsh plugin` 会替你装好
 
 ### 一条命令
@@ -379,11 +379,11 @@ $DSH_HOME/user-memory/
 
 ```sh
 pnpm install
-pnpm test           # 68/68：单测 + 存储集成 + 项目记忆 + 后台整理 + harness 集成 + 完整 AgentLoop 循环级测试
+pnpm test           # 79/79：单测 + 锁原语 + 存储集成 + 项目记忆 + 后台整理 + harness 集成 + 完整 AgentLoop 循环级测试
 pnpm run build      # tsc 编译到 lib/
 ```
 
-- 测试在当前依赖线全绿：`0.1.7-alpha.1` 与 `0.2.0-rc.2` 各 68 项
+- 测试在当前依赖线全绿：`0.1.7-alpha.1` 与 `0.2.0-rc.2` 各 79 项
 - 存储层刻意直接使用 `node:fs`，因为它属于插件内部受信状态，与 settings、会话持久化同类，不走沙箱化的模型侧 `ctx.fs`
 - 代码结构：
 
@@ -391,7 +391,8 @@ pnpm run build      # tsc 编译到 lib/
 |---|---|
 | `src/index.ts` | 插件本体：配置、装配、回合边界触发 |
 | `src/profile.ts` | 个人画像的纯文档模型：解析、序列化、合并、淘汰、渲染、时效判定 |
-| `src/store.ts` | 个人画像的原子写存储，含超限淘汰 |
+| `src/store.ts` | 个人画像的原子写存储，含超限淘汰与时间戳保留式改写 |
+| `src/lock.ts` | 读改写的并发保护：进程内串行加跨进程锁文件 |
 | `src/workspace.ts` | 项目记忆层：主题文件、索引重建、关键词检索 |
 | `src/consolidate.ts` | 后台整理：确定性规则、模型提案解析、执行与审计日志 |
 | `src/tools.ts` | 五个模型可见工具 |
@@ -431,6 +432,7 @@ MIT
 [topic]: https://github.com/topics/dsh-plugin
 [harness]: https://github.com/deepseek-ai/deepseek-harness
 [issue1]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/1
+[changelog-021]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.1
 
 [s1]: #1-它解决什么问题
 [s2]: #2-核心能力

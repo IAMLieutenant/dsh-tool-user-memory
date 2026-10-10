@@ -196,6 +196,25 @@ test('readWorkspaceIndexSync returns the index for a cwd, null when empty or mis
   }
 });
 
+test('createWorkspaceMemory: concurrent topic writes all survive, index included', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-um-ws6-'));
+  try {
+    const ws = await createWorkspaceMemory({ cwd: dir, baseDir: join(dir, 'base') });
+    const results = await Promise.all(
+      Array.from({ length: 10 }, (_, i) => ws.write(`topic-${i}`, `body ${i}`, 'set')),
+    );
+    assert.ok(results.every((result) => result.ok));
+    const topics = (await ws.list()).map((t) => t.topic);
+    assert.equal(topics.length, 10);
+    const index = await ws.indexText();
+    for (let i = 0; i < 10; i += 1) {
+      assert.ok(index.includes(`## topic-${i}`), `topic-${i} is listed in the rebuilt index`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('readWorkspaceSync skips unreadable topic entries instead of throwing', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-um-ws5-'));
   try {

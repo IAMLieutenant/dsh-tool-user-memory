@@ -225,6 +225,45 @@ test('applyPlan writes through the store, is idempotent, and logs an auditable r
   }
 });
 
+test('applyPlan: rewrite keeps the entry age while add refreshes it', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-um-cons5-'));
+  try {
+    const file = join(dir, 'user.md');
+    await writeFile(
+      file,
+      '# User Memory\n\n## plan\n<!-- ts: 2026-01-01T00:00:00.000Z -->\ntomorrow I ship the release\n',
+      'utf8',
+    );
+    const store = createMemoryStore({ path: file, maxBytes: 8192 });
+    const before = (await store.list())[0]!;
+    const record = await applyPlan(
+      store,
+      null,
+      {
+        ops: [
+          {
+            op: 'rewrite',
+            key: 'plan',
+            value: `${before.value}\n(recorded 2026-01-01; relative dates refer to this date)`,
+          },
+          { op: 'add', key: 'fresh', value: 'recorded now' },
+        ],
+        notes: [],
+      },
+      'manual',
+    );
+    assert.equal(record.applied.length, 2);
+    const after = await store.list();
+    const rewritten = after.find((entry) => entry.key === 'plan')!;
+    const added = after.find((entry) => entry.key === 'fresh')!;
+    assert.equal(rewritten.updatedAt, before.updatedAt, 'a content edit never resets the age');
+    assert.notEqual(added.updatedAt, before.updatedAt, 'a new entry is stamped now');
+    assert.ok(rewritten.value.includes('(recorded '));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('applyPlan applies workspace ops through the workspace store', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-um-cons2-'));
   try {

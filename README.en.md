@@ -405,12 +405,13 @@ The v2 plan follows a 2026-10 survey of memory architectures, including OpenAI's
 
 - ✅ **Temporal semantics**, shipped in 0.2.0: soft invalidation, aging annotations and `includeStale` auditing, so memories stay correct over time
 - ✅ **Layered memory**, shipped in 0.2.0: personal profile plus project memory, index injection with lazy bodies; project identity is the sha256 of the session directory realpath
-- ✅ **File-first search**, shipped in 0.2.0: keyword scoring with one-line snippets. Embedding recall waits until the entry count is far larger, see [issue #4][issue4]
+- ✅ **File-first search**, shipped in 0.2.0: keyword scoring with one-line snippets. Embedding recall waits until the entry count is far larger
 - ✅ **Background tidying**, shipped in 0.2.0: asynchronous at turn boundaries plus a manual tool, deterministic rules as the base, optional model assistance, always with an audit log
-- **Review-style consolidation**: a subagent reads the profile and a session summary and emits a structured diff, for semantic convergence, plus once-per-session, short-conversation skip and a soft budget cap, see [issue #5][issue5]
-- **More triggers**: session idle, compaction and scheduled runs, see [issue #2][issue2]
-- **Per-entry creation time**: record the first write time separately for every memory, see [issue #3][issue3]
+- **Review-style consolidation**: a subagent reads the profile and a session summary and emits a structured diff, for semantic convergence, plus once-per-session, short-conversation skip and a soft budget cap
+- **More triggers**: session idle, compaction and scheduled runs
+- **Per-entry creation time**: record the first write time separately for every memory
 - Per-user profiles, keyed by session identity
+- Progress on all of the above is tracked in [issue #1][issue1]
 
 ---
 
@@ -429,10 +430,7 @@ MIT
 [readme-zh]: README.md
 [topic]: https://github.com/topics/dsh-plugin
 [harness]: https://github.com/deepseek-ai/deepseek-harness
-[issue2]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/2
-[issue3]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/3
-[issue4]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/4
-[issue5]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/5
+[issue1]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/1
 
 [s1]: #1-the-problem-it-solves
 [s2]: #2-capabilities

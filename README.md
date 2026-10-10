@@ -405,12 +405,13 @@ v2 路线来自 2026-10 对多个记忆架构的调研，包括 OpenAI 的记忆
 
 - ✅ **时间语义**，0.2.0 已实现：软失效、老化标注、`includeStale` 审计，让记忆随时间保持正确
 - ✅ **记忆分层**，0.2.0 已实现：个人画像加项目记忆，索引注入、正文懒加载；项目身份取会话目录 realpath 的 sha256
-- ✅ **文件检索优先**，0.2.0 已实现：关键词评分加一行摘要。向量召回留到条目量级很大时才考虑，见 [issue #4][issue4]
+- ✅ **文件检索优先**，0.2.0 已实现：关键词评分加一行摘要。向量召回留到条目量级很大时才考虑
 - ✅ **后台整理**，0.2.0 已实现：回合边界异步触发加手动工具，确定性规则打底，可选模型辅助，全程审计日志
-- **复盘式巩固**：用 subagent 读当前画像与会话摘要，产出结构化 diff，做语义级收敛，并支持每会话一次、短对话跳过、预算软上限，见 [issue #5][issue5]
-- **补齐触发方式**：会话空闲、compaction、定时任务，见 [issue #2][issue2]
-- **条目的创建时间**：为每条记忆单独记录首次写入时间，见 [issue #3][issue3]
+- **复盘式巩固**：用 subagent 读当前画像与会话摘要，产出结构化 diff，做语义级收敛，并支持每会话一次、短对话跳过、预算软上限
+- **补齐触发方式**：会话空闲、compaction、定时任务
+- **条目的创建时间**：为每条记忆单独记录首次写入时间
 - 多用户画像，按会话身份分文件
+- 以上待办与验收进度统一记录在 [issue #1][issue1]
 
 ---
 
@@ -429,10 +430,7 @@ MIT
 [readme-en]: README.en.md
 [topic]: https://github.com/topics/dsh-plugin
 [harness]: https://github.com/deepseek-ai/deepseek-harness
-[issue2]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/2
-[issue3]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/3
-[issue4]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/4
-[issue5]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/5
+[issue1]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/1
 
 [s1]: #1-它解决什么问题
 [s2]: #2-核心能力

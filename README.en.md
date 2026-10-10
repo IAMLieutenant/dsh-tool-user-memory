@@ -6,19 +6,19 @@ A persistent memory plugin for [DeepSeek Harness][harness], implemented through 
 
 The plugin supports a global user profile, project memory organized by working directory, keyword search, soft invalidation, and memory consolidation. This project is developed and maintained independently by the community.
 
-[中文][readme-zh] · [npm][npm-url] · [Changelog][changelog] · [Release v0.2.2][release-url]
+[中文][readme-zh] · [npm][npm-url] · [Changelog][changelog] · [Release v0.2.3][release-url]
 
 ## Quick start
 
 With DeepSeek Harness installed, run:
 
 ```sh
-dsh plugin --profile web add dsh-tool-user-memory@0.2.2
+dsh plugin --profile web add dsh-tool-user-memory@0.2.3
 ```
 
 Replace `web` with the profile you use. Restart your DSH session after installation; in web mode, restart `dsh web`.
 
-Memory tools and prompt injection are enabled by default. Automatic consolidation is disabled by default, and model-assisted consolidation requires a configured provider and model. Existing memory files require no manual migration when upgrading to 0.2.2.
+Memory tools and prompt injection are enabled by default. Automatic consolidation is disabled by default, and model-assisted consolidation requires a configured provider and model. Existing memory files require no manual migration when upgrading to 0.2.3.
 
 ## Contents
 
@@ -71,7 +71,7 @@ Writes use atomic replacement, with serialization within a process and a lock ac
 ### Requirements
 
 - A working [DeepSeek Harness][harness] installation with the `dsh` CLI.
-- Version 0.2.2 has passed builds and 92 tests on each of the DSH dependency versions `0.1.7-alpha.1` and `0.2.0-rc.2`.
+- Version 0.2.3 has passed builds and 92 tests on each of the DSH dependency versions `0.1.7-alpha.1` and `0.2.0-rc.2`.
 - `dsh plugin` installs the npm package and adds the plugin to the profile's bundle configuration using its `dsh.bundle.patch` declaration.
 
 ### Installation and upgrades
@@ -79,7 +79,7 @@ Writes use atomic replacement, with serialization within a process and a lock ac
 The quick-start command applies to both installation and upgrades. Other profiles use the same syntax, for example:
 
 ```sh
-dsh plugin --profile headless add dsh-tool-user-memory@0.2.2
+dsh plugin --profile headless add dsh-tool-user-memory@0.2.3
 ```
 
 ### Installation from source
@@ -90,13 +90,13 @@ cd dsh-tool-user-memory
 pnpm install --frozen-lockfile
 pnpm run build
 pnpm pack
-dsh plugin --profile web add ./dsh-tool-user-memory-0.2.2.tgz
+dsh plugin --profile web add ./dsh-tool-user-memory-0.2.3.tgz
 ```
 
 ### Verification
 
 1. Check the profile's `package.json` and confirm that `dsh.profile.bundles` includes `dsh-tool-user-memory`.
-2. Restart the session and ask the agent which memory tools are available. Version 0.2.2 provides the five tools documented below.
+2. Restart the session and ask the agent which memory tools are available. Version 0.2.3 provides the five tools documented below.
 3. Request that a preference be saved, confirm a successful tool result, and check that the profile file contains the entry.
 
 Example profile configuration:
@@ -344,7 +344,7 @@ pnpm test
 pnpm run build
 ```
 
-Validation results for 0.2.2:
+Validation results for 0.2.3:
 
 | DSH dependency version | Tests | TypeScript build |
 |---|---|---|
@@ -378,6 +378,7 @@ The storage layer uses `node:fs` to manage the plugin's persistent state.
 | `0.2.0` | Project memory, keyword search, soft invalidation, time annotations, and consolidation |
 | `0.2.1` | Fixes for lost concurrent writes and date rewrites resetting memory age |
 | `0.2.2` | Fixes for older consolidation plans overwriting newer content, unintended reactivation, reserved topic-name conflicts, and byte limits |
+| `0.2.3` | Concise Chinese package description and revised Chinese and English documentation |
 
 See the [changelog][changelog] for full release details.
 
@@ -398,7 +399,7 @@ These features are not yet implemented. Progress and acceptance criteria are tra
 [badge-release]: https://img.shields.io/github/v/release/IAMLieutenant/dsh-tool-user-memory
 [badge-license]: https://img.shields.io/badge/license-MIT-blue
 [npm-url]: https://www.npmjs.com/package/dsh-tool-user-memory
-[release-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.2
+[release-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.3
 [changelog]: CHANGELOG.md
 [readme-zh]: README.md
 [harness]: https://github.com/deepseek-ai/deepseek-harness

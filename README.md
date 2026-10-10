@@ -6,19 +6,19 @@
 
 支持全局用户画像、按工作目录组织的项目记忆、关键词检索、软失效和记忆整理。本项目由社区独立开发和维护。
 
-[English][readme-en] · [npm][npm-url] · [更新日志][changelog] · [Release v0.2.2][release-url]
+[English][readme-en] · [npm][npm-url] · [更新日志][changelog] · [Release v0.2.3][release-url]
 
 ## 快速开始
 
 在已安装 DeepSeek Harness 的环境中，运行：
 
 ```sh
-dsh plugin --profile web add dsh-tool-user-memory@0.2.2
+dsh plugin --profile web add dsh-tool-user-memory@0.2.3
 ```
 
 将 `web` 替换为实际使用的 profile。安装完成后重启 DSH 会话；web 模式需重启 `dsh web`。
 
-默认启用记忆工具和提示词注入。自动整理默认关闭，模型辅助整理需要配置 provider 与 model。已有记忆文件升级到 0.2.2 时无需手动迁移。
+默认启用记忆工具和提示词注入。自动整理默认关闭，模型辅助整理需要配置 provider 与 model。已有记忆文件升级到 0.2.3 时无需手动迁移。
 
 ## 目录
 
@@ -71,7 +71,7 @@ dsh plugin --profile web add dsh-tool-user-memory@0.2.2
 ### 环境要求
 
 - 已安装并可运行 [DeepSeek Harness][harness] 的 `dsh` CLI。
-- 0.2.2 已在 DSH 依赖版本 `0.1.7-alpha.1` 和 `0.2.0-rc.2` 上分别完成构建与 92 项测试。
+- 0.2.3 已在 DSH 依赖版本 `0.1.7-alpha.1` 和 `0.2.0-rc.2` 上分别完成构建与 92 项测试。
 - `dsh plugin` 负责安装 npm 包，并根据包中的 `dsh.bundle.patch` 声明将插件加入 profile 的 bundle 配置。
 
 ### 安装与升级
@@ -79,7 +79,7 @@ dsh plugin --profile web add dsh-tool-user-memory@0.2.2
 快速开始中的命令同时适用于安装和升级。其他 profile 使用相同语法，例如：
 
 ```sh
-dsh plugin --profile headless add dsh-tool-user-memory@0.2.2
+dsh plugin --profile headless add dsh-tool-user-memory@0.2.3
 ```
 
 ### 从源码安装
@@ -90,13 +90,13 @@ cd dsh-tool-user-memory
 pnpm install --frozen-lockfile
 pnpm run build
 pnpm pack
-dsh plugin --profile web add ./dsh-tool-user-memory-0.2.2.tgz
+dsh plugin --profile web add ./dsh-tool-user-memory-0.2.3.tgz
 ```
 
 ### 验证安装
 
 1. 检查 profile 的 `package.json`，确认 `dsh.profile.bundles` 包含 `dsh-tool-user-memory`。
-2. 重启会话后，询问 agent 可用的记忆工具。0.2.2 提供下文列出的五个工具。
+2. 重启会话后，询问 agent 可用的记忆工具。0.2.3 提供下文列出的五个工具。
 3. 请求保存一条偏好，确认工具返回成功，再检查画像文件是否包含对应条目。
 
 profile 配置示例：
@@ -344,7 +344,7 @@ pnpm test
 pnpm run build
 ```
 
-0.2.2 的验证结果：
+0.2.3 的验证结果：
 
 | DSH 依赖版本 | 测试 | TypeScript 构建 |
 |---|---|---|
@@ -378,6 +378,7 @@ pnpm run build
 | `0.2.0` | 增加项目记忆、关键词检索、软失效、时间标注与整理 |
 | `0.2.1` | 修复并发写入丢失及日期改写重置记忆年龄的问题 |
 | `0.2.2` | 修复旧整理方案覆盖新内容、失效记录意外恢复、保留主题名冲突及字节限制问题 |
+| `0.2.3` | 将插件列表描述改为简洁中文，并更新中英文 README 的结构与表述 |
 
 完整变更记录见 [CHANGELOG][changelog]。
 
@@ -398,7 +399,7 @@ pnpm run build
 [badge-release]: https://img.shields.io/github/v/release/IAMLieutenant/dsh-tool-user-memory
 [badge-license]: https://img.shields.io/badge/license-MIT-blue
 [npm-url]: https://www.npmjs.com/package/dsh-tool-user-memory
-[release-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.2
+[release-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.3
 [changelog]: CHANGELOG.md
 [readme-en]: README.en.md
 [harness]: https://github.com/deepseek-ai/deepseek-harness

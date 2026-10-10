@@ -1,7 +1,7 @@
 {
   "name": "dsh-tool-user-memory",
-  "version": "0.2.2",
-  "description": "User preference memory for DeepSeek Harness: a global profile plus per-project memory, five memory tools, soft invalidation with aging, and background consolidation with an audit log",
+  "version": "0.2.3",
+  "description": "为 DSH 提供跨会话用户偏好与项目记忆。",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",

@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] — 2026-10-10
+
+### Changed
+
+- 将 DSH 插件列表使用的包描述改为简洁中文：为 DSH 提供跨会话用户偏好与项目记忆。
+- 中英文 README 采用客观、专业的文档表述，重新组织安装、配置、使用示例与工具参考，并明确默认行为、存储范围、容量限制和验证范围。
+
 ## [0.2.2] — 2026-10-10
 
 这次主要让记忆保存和整理更可靠；已有记忆文件不用手动迁移，工具和默认开关不变。

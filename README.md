@@ -6,7 +6,7 @@
 > （GitHub 话题：[`dsh-plugin`](https://github.com/topics/dsh-plugin)）。
 > 与官方仓库无关；直接通过 npm 安装，30 秒启用。
 
-[English](README.en.md) ｜ [更新日志](CHANGELOG.md)
+[English](README.en.md) ｜ [更新日志](CHANGELOG.md) ｜ 最新版本 **0.2.0**（[Release](https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.0) · [npm](https://www.npmjs.com/package/dsh-tool-user-memory)）
 
 ---
 
@@ -32,6 +32,9 @@
 | `memory_consolidate(mode?, useModel?)` | 整理记忆：合并重复、锚定相对时间、失效过时条目，产出审计日志 |
 | `{{user_profile}}` 系统提示词注入 | **每个会话每轮自动携带**你的画像 + 当前工作区记忆索引（两者都空则零 token 成本） |
 | 记忆分层 | 全局画像 + 工作区记忆（索引 + 主题文件），全部人类可读、可手改、可删除 |
+
+> **0.2.0 新增**：记忆分层（工作区记忆 + `memory_search` / `memory_topic`）、时间语义（软失效 `mode=invalidate` + 老化 `staleAfterDays`）、后台巩固（`memory_consolidate` + 审计日志 `consolidation-log.md`）。
+> 详见 [更新日志](CHANGELOG.md) 与 [Release 0.2.0](https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.0)。
 
 ### 工作原理（30 秒版）
 
@@ -279,7 +282,7 @@ v2 路线基于 2026-10 对 OpenAI（Dreaming）、Claude Code（自动记忆分
 - ✅ **时间语义**（0.2.0 已实现）：软失效（`mode=invalidate` + `reason`，保留历史不删除）+ 老化配置 `staleAfterDays` + `memory_get(includeStale)` 审计，让记忆「随时间保持正确」（对照 OpenAI 三轴：事实回忆 / 偏好遵循 / 时间正确）
 - ✅ **记忆分层**（0.2.0 已实现）：全局画像 + 工作区级记忆（索引 + 主题文件，懒加载，对齐 Claude Code auto-memory 结构）；工作区身份 = `sha256(realpath(cwd))`，按会话 `cwd` 自动归属
 - ✅ **`memory_search`**（0.2.0 已实现）：文件检索优先（关键词 + 评分 + 一行摘要）；向量召回仅在条目量级很大（> ~500）时才值得引入（Letta 基准：个人规模下纯文件检索已超过 Mem0 图方案）
-- ✅ **后台巩固（"dreaming"）**（0.2.0 已实现）：**回合边界**异步触发（可开关、可去抖，不阻塞回合）+ 手动 `memory_consolidate`；确定性规则（合并重复 / 相对时间锚定 / 老化失效）打底，可选模型辅助（`consolidateProvider` + `consolidateModel`）提出 ops 并逐条校验；全程写入可审计的 `consolidation-log.md`。**尚未做**：会话空闲 / 定时（`schedule` 子系统）触发，留待后续版本
+- ✅ **后台巩固（"dreaming"）**（0.2.0 已实现）：**回合边界**异步触发（可开关、可去抖，不阻塞回合）+ 手动 `memory_consolidate`；确定性规则（合并重复 / 相对时间锚定 / 老化失效）打底，可选模型辅助（`consolidateProvider` + `consolidateModel`）提出 ops 并逐条校验；全程写入可审计的 `consolidation-log.md`。**尚未做**：会话空闲 / 定时（`schedule` 子系统）触发（[跟踪 issue #2](https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/2)）
 - 多用户画像（按会话身份分文件）
 
 ---

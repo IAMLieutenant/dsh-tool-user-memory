@@ -9,7 +9,7 @@ project background, goals. No need to re-introduce yourself in every new session
 > [`dsh-plugin`](https://github.com/topics/dsh-plugin)). Not affiliated with the
 > official repository; install straight from npm and enable it in ~30 seconds.
 
-[中文](README.md) ｜ [Changelog](CHANGELOG.md)
+[中文](README.md) ｜ [Changelog](CHANGELOG.md) ｜ Latest **0.2.0** ([release](https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.0) · [npm](https://www.npmjs.com/package/dsh-tool-user-memory))
 
 ---
 
@@ -38,6 +38,9 @@ This plugin gives the agent a **persisted user profile**:
 | `memory_consolidate(mode?, useModel?)` | Tidies memory: merges duplicates, anchors relative dates, retires stale facts, and writes an audit log |
 | `{{user_profile}}` system-prompt injection | **Every turn of every session** carries your profile plus the current workspace memory index (zero token cost while both are empty) |
 | Layered memory | Global profile + per-workspace memory (index + topic files) — all human-readable, editable, deletable |
+
+> **New in 0.2.0**: layered memory (workspace memory + `memory_search` / `memory_topic`), temporal semantics (soft invalidation via `mode=invalidate` + `staleAfterDays` aging), and background consolidation (`memory_consolidate` + an auditable `consolidation-log.md`).
+> See the [changelog](CHANGELOG.md) and [release 0.2.0](https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.0).
 
 ### How it works (30 seconds)
 
@@ -300,7 +303,7 @@ The v2 roadmap follows the 2026-10 survey of memory architectures at OpenAI (Dre
 - ✅ **Temporal semantics** (implemented in 0.2.0): soft invalidation (`mode=invalidate` + `reason`, history preserved, never deleted) + aging config `staleAfterDays` + `memory_get(includeStale)` audit, so memories "stay correct over time" (benchmarked against OpenAI's three axes: fact recall / preference adherence / temporal correctness)
 - ✅ **Memory layering** (implemented in 0.2.0): global profile + per-workspace memory (index + topic files, lazy-loaded, mirroring Claude Code auto-memory); workspace identity = `sha256(realpath(cwd))`, resolved automatically from the session's cwd
 - ✅ **`memory_search`** (implemented in 0.2.0): file-based search first (keyword + scoring + one-line snippets); embedding recall only becomes worthwhile at a much larger scale (> ~500 entries; Letta benchmark: plain file search already beats Mem0's graph approach at personal scale)
-- ✅ **Background consolidation ("dreaming")** (implemented in 0.2.0): asynchronous **at turn boundaries** (opt-in, debounced, never blocks the turn) plus a manual `memory_consolidate`; deterministic rules (duplicate merge / relative-date anchoring / aging) as the base, with optional model assistance (`consolidateProvider` + `consolidateModel`) proposing validated ops; every run lands in an auditable `consolidation-log.md`. **Not yet**: idle / scheduled triggers (the `schedule` subsystem) — planned for a later release
+- ✅ **Background consolidation ("dreaming")** (implemented in 0.2.0): asynchronous **at turn boundaries** (opt-in, debounced, never blocks the turn) plus a manual `memory_consolidate`; deterministic rules (duplicate merge / relative-date anchoring / aging) as the base, with optional model assistance (`consolidateProvider` + `consolidateModel`) proposing validated ops; every run lands in an auditable `consolidation-log.md`. **Not yet**: idle / scheduled triggers (the `schedule` subsystem) — tracked in [issue #2](https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/2)
 - Per-user profiles (keyed by session identity)
 
 ---

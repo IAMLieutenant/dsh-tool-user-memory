@@ -45,7 +45,7 @@ dsh plugin --profile web add dsh-tool-user-memory@0.3.0
 
 模型是否准确采用偏好仍取决于其行为。上述步骤可以先验证记忆已经保存，并能在新会话中读取。
 
-如果这个插件对你有用，欢迎点 **⭐ Star**，方便以后找到。使用反馈、问题和功能建议欢迎提交到 [Issues][issues-url]。
+使用反馈、问题和功能建议欢迎提交到 [Issues][issues-url]。
 
 ## 目录
 

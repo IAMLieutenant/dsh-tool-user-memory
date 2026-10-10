@@ -45,7 +45,7 @@ Memory tools and prompt injection are enabled by default. Automatic consolidatio
 
 Whether the model follows a preference accurately still depends on its behavior. These steps verify that the memory is saved and accessible in a new session.
 
-If this plugin is useful to you, **⭐ Star** the repository to find it again. Feedback, bug reports, and feature suggestions are welcome in [Issues][issues-url].
+Feedback, bug reports, and feature suggestions are welcome in [Issues][issues-url].
 
 ## Contents
 

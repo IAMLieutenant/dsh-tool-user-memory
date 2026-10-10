@@ -1,69 +1,97 @@
 # dsh-tool-user-memory
 
-**User preference memory for DeepSeek Harness**: a Cordis plugin that lets the
-agent remember your preferences across sessions — language, communication style,
-project background, goals. No need to re-introduce yourself in every new session.
+[npm version][badge-npm] [GitHub release][badge-release] [License MIT][badge-license] [DSH lines][badge-dsh]
 
-> **Standalone open-source plugin** — developed and maintained independently as
-> part of the DeepSeek Harness community ecosystem (topic:
-> [`dsh-plugin`](https://github.com/topics/dsh-plugin)). Not affiliated with the
-> official repository; install straight from npm and enable it in ~30 seconds.
+**User preference memory for DeepSeek Harness**: a Cordis plugin that lets the agent remember your preferences across sessions — language, communication style, project background, goals. No need to re-introduce yourself in every new session.
 
-[中文](README.md) ｜ [Changelog](CHANGELOG.md) ｜ Latest **0.2.0** ([release](https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.0) · [npm](https://www.npmjs.com/package/dsh-tool-user-memory))
+> **Standalone open-source plugin**. Developed and maintained independently as part of the DeepSeek Harness community ecosystem, see the GitHub topic [`dsh-plugin`][topic].
+> Not affiliated with the official repository; install straight from npm and it just works.
+
+[中文][readme-zh] ｜ [Changelog][changelog] ｜ Latest **0.2.0**, see [release v0.2.0][release-url]
+
+## Contents
+
+| Section | What is inside |
+|---|---|
+| [1. The problem it solves][s1] | Problem, payoff, before-and-after |
+| [2. Capabilities][s2] | Five tools, four mechanisms |
+| [3. Install][s3] | One command, source install, every config key |
+| [4. Verify the install][s4] | Three ways to confirm |
+| [5. Usage guide][s5] | Remember, inspect, edit, forget, tidy |
+| [6. Where the memory lives][s6] | File layout, lifecycle, security stance |
+| [7. Tool reference][s7] | Argument tables and return shapes |
+| [8. FAQ][s8] | Memory not showing up, size limits, privacy |
+| [9. Development][s9] | Build, test, code layout |
+| [10. Roadmap][s10] | The v2 plan and what already shipped |
 
 ---
 
-## 1. What it does
+## 1. The problem it solves
 
-### The problem
-
-By default a DeepSeek Harness agent is a "stranger" in every new session: it does
-not know your preferences, your projects, or even your language. Every session
-starts from scratch.
+By default a DeepSeek Harness agent is **a stranger in every new session**: it does not know whether you prefer terse or detailed answers, what you work on, or which language you speak. Every session starts from scratch.
 
 This plugin gives the agent a **persisted user profile**:
 
-- You say "I prefer concise answers" — the agent writes it to a memory file;
-- **Every subsequent session** the profile is injected into the system prompt,
-  so the agent knows you from the start — no reminders, no tool calls needed.
+- You say "I prefer concise answers" and the agent writes it to a memory file;
+- **Every subsequent session** carries that memory in its system prompt. No reminders, and no tool call required.
 
-### Capabilities
+### Before and after
 
-| Capability | Description |
-|---|---|
-| `memory_update(key, value, mode?, reason?, scope?)` | The agent records / appends / soft-invalidates / removes a stable preference it just learned; `scope=workspace` writes project memory |
-| `memory_get(query?, limit?, includeStale?)` | The agent reads your profile when personalisation matters |
-| `memory_search(query?, limit?, includeStale?)` | Keyword search across the global profile **and** the current workspace's memory (scored, with one-line snippets) |
-| `memory_topic(topic)` | Reads one workspace memory topic in full (lazy load) |
-| `memory_consolidate(mode?, useModel?)` | Tidies memory: merges duplicates, anchors relative dates, retires stale facts, and writes an audit log |
-| `{{user_profile}}` system-prompt injection | **Every turn of every session** carries your profile plus the current workspace memory index (zero token cost while both are empty) |
-| Layered memory | Global profile + per-workspace memory (index + topic files) — all human-readable, editable, deletable |
+| Aspect | A stock agent | With this plugin |
+|---|---|---|
+| A new session | You introduce yourself again | Your profile is already there, so the tone fits |
+| Project knowledge | Forgotten as soon as you switch projects | Per-directory project memory, no bleed between projects |
+| Outdated facts | Either misleading or manually deleted | Soft invalidation: no longer affects answers, still auditable |
+| Memory growth | Bigger profile, more tokens every turn | Injection has its own budget, eviction is oldest-first, background tidying available |
+| Auditability | What was stored or dropped is a guess | The memory is plain Markdown, and tidying writes its own log |
 
-> **New in 0.2.0**: layered memory (workspace memory + `memory_search` / `memory_topic`), temporal semantics (soft invalidation via `mode=invalidate` + `staleAfterDays` aging), and background consolidation (`memory_consolidate` + an auditable `consolidation-log.md`).
-> See the [changelog](CHANGELOG.md) and [release 0.2.0](https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.0).
-
-### How it works (30 seconds)
+### How it works
 
 ```
-You: "Remember: I prefer concise Chinese answers"
-  → agent decides to call memory_update
-  → writes to $DSH_HOME/user-memory/user.md (atomic write, owner-only)
-  → every new session: profile injected into the system prompt → the agent knows you
+You: "Remember: I prefer concise answers"
+  → the agent calls memory_update
+  → writes to $DSH_HOME/user-memory/user.md, atomically, owner-only
+  → every new session: the profile is injected into the system prompt
 ```
 
 ---
 
-## 2. Install
+## 2. Capabilities
+
+### Five tools
+
+| Tool | What it does |
+|---|---|
+| `memory_get` | Reads the personal profile, optionally filtered by keyword |
+| `memory_update` | Records, appends, soft-invalidates or removes one memory, either in the personal profile or in project memory |
+| `memory_search` | Keyword search across the personal profile **and** the current project memory, returning scored hits with one-line snippets |
+| `memory_topic` | Reads one project memory topic in full |
+| `memory_consolidate` | Tidies memory: merges duplicates, anchors relative dates, retires stale entries, and writes an audit log |
+
+### Four mechanisms
+
+| Mechanism | What it means |
+|---|---|
+| System-prompt injection | Every turn of every session carries the personal profile plus the current project memory index; zero token cost while both are empty |
+| Layered memory | The personal profile is global; project memory is isolated per session directory and visible only to sessions opened there |
+| Temporal semantics | Every entry carries an update time; entries can be soft-invalidated; aging annotations are configurable |
+| Background tidying | Runs asynchronously at turn boundaries, or on demand; every run leaves an audit log |
+
+> **New in 0.2.0**: layered memory, temporal semantics and background tidying. See the [changelog][changelog].
+
+---
+
+## 3. Install
 
 ### Prerequisites
 
-- A working [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-  (`dsh` CLI; verified on 0.1.7-alpha.x / 0.2.0-rc.x).
-- No manual npm setup needed — `dsh plugin` installs the package for you.
+- A working [DeepSeek Harness][harness] with the `dsh` CLI
+- This plugin is verified on both runtime lines, **0.1.7-alpha.x** and **0.2.0-rc.x**, with 68 tests green on each
+- No manual npm step: `dsh plugin` installs the package for you
 
-### One command (recommended)
+### One command
 
-Install into the profile you use, e.g. web:
+Install into the profile you use, for example web:
 
 ```sh
 dsh plugin --profile web add dsh-tool-user-memory
@@ -75,11 +103,10 @@ headless or any other profile works the same way:
 dsh plugin --profile headless add dsh-tool-user-memory
 ```
 
-**Then restart your dsh session** (for web: restart `dsh web`) — the plugin activates on boot.
+**Then restart your dsh session**: for web, restart `dsh web`, and the plugin activates.
 
-> The install does two things: 1) adds the package to the profile's dependencies;
-> 2) because the package declares `dsh.bundle.patch`, it is automatically activated
-> as a profile bundle layer (see verification below).
+> The install does two things: it adds the package to the profile dependencies, and because the
+> package declares `dsh.bundle.patch`, it also activates the plugin as a profile bundle layer.
 
 ### Alternative: install from source
 
@@ -92,223 +119,328 @@ pnpm pack                       # produces dsh-tool-user-memory-0.2.0.tgz
 dsh plugin --profile web add ./dsh-tool-user-memory-0.2.0.tgz
 ```
 
-### Configuration (optional)
+### Configuration
 
-Zero config by default. To tweak, override the `tool-user-memory` row in the
-profile's `cordis.patch.yml`:
+Zero config by default. To tweak anything, override the `tool-user-memory` row in the profile's `cordis.patch.yml`:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `path` | `$DSH_HOME/user-memory/user.md` | Profile file path |
-| `maxBytes` | `8192` | Max profile file bytes; oldest entries are evicted first when exceeded |
-| `promptMaxBytes` | `2048` | Per-turn injection byte budget (newest first); `0` injects the full profile |
-| `includeInPrompt` | `true` | Inject the profile into every session's system prompt |
-| `staleAfterDays` | `0` | Entries not updated within N days get a `[stale: last updated Nd ago]` annotation (annotation only, never deleted); `0` = off |
-| `workspacePromptMaxBytes` | `512` | Per-turn byte budget for the injected workspace memory index (bodies stay lazy); `0` = no workspace injection |
-| `workspaceBase` | `$DSH_HOME/user-memory/workspace` | Workspace memory root directory (mainly for testing or custom layouts) |
-| `autoConsolidate` | `false` | Run a background tidy at turn boundaries (debounced, never blocks the turn) |
-| `consolidateMinIntervalMs` | `600000` | Minimum interval between automatic runs; `0` = every turn boundary |
-| `autoInvalidateAfterDays` | `0` | Consolidation soft-invalidates entries not updated for N days (they stay in the file for audit); `0` = never |
-| `consolidateProvider` / `consolidateModel` | `''` | Optional model-assisted consolidation (empty = deterministic rules only) |
-| `consolidateMaxTokens` | `1024` | Output cap for one consolidation model call |
+| `path` | `$DSH_HOME/user-memory/user.md` | Personal profile file path |
+| `maxBytes` | `8192` | Profile file size cap; entries are evicted oldest-first when exceeded |
+| `promptMaxBytes` | `2048` | Per-turn injection budget, newest entries first; `0` injects the full profile |
+| `includeInPrompt` | `true` | Whether to inject the profile into every session's system prompt |
+| `staleAfterDays` | `0` | Entries not updated within N days get a `[stale: last updated Nd ago]` annotation; annotation only, never a deletion; `0` disables it |
+| `workspacePromptMaxBytes` | `512` | Per-turn byte budget for the project memory index, bodies stay lazy; `0` disables project injection |
+| `workspaceBase` | `$DSH_HOME/user-memory/workspace` | Project memory root directory, mainly for tests or custom layouts |
+| `autoConsolidate` | `false` | Whether to tidy memory in the background at turn boundaries, debounced and never blocking |
+| `consolidateMinIntervalMs` | `600000` | Minimum interval between automatic runs; `0` means every turn boundary |
+| `autoInvalidateAfterDays` | `0` | Tidying soft-invalidates entries not updated for N days, keeping them in the file for audit; `0` disables it |
+| `consolidateProvider` | `''` | Optional provider for model-assisted tidying; empty means deterministic rules only |
+| `consolidateModel` | `''` | Optional model id for model-assisted tidying |
+| `consolidateMaxTokens` | `1024` | Output cap for one tidying model call |
 | `consolidationLogPath` | `$DSH_HOME/user-memory/consolidation-log.md` | Audit log path |
 
 ---
 
-## 3. Verify the installation
+## 4. Verify the install
 
-### Method 1 — check the profile manifest
+### Method 1: check the profile manifest
 
-Open the profile's `package.json` (e.g. `$DSH_HOME/profiles/web/package.json`);
-`dsh.profile.bundles` must contain `dsh-tool-user-memory`:
+Open the profile's `package.json`, for example `$DSH_HOME/profiles/web/package.json`, and confirm that `dsh.profile.bundles` contains `dsh-tool-user-memory`:
 
 ```json
 "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "dsh-tool-user-memory"] } }
 ```
 
-### Method 2 — ask the agent about its memory tools
+### Method 2: ask the agent which memory tools it has
 
 After restarting, ask:
 
 > "What memory-related tools do you have?"
 
-A correct answer mentions `memory_get` and `memory_update`.
+A correct answer mentions `memory_get` and `memory_update`; on 0.2.0 it should also mention `memory_search`, `memory_topic` and `memory_consolidate`.
 
-### Method 3 — check the profile file is writable
+### Method 3: look at the profile file
 
-After using "remember" once, `$DSH_HOME/user-memory/user.md` should exist and be
-readable (Windows default: `C:\Users\<you>\.dsh\user-memory\user.md`).
+After using "remember" once, `$DSH_HOME/user-memory/user.md` should exist and be readable. On Windows the default location is `C:\Users\<you>\.dsh\user-memory\user.md`.
 
 ---
 
-## 4. Usage guide: make the agent remember you
+## 5. Usage guide
 
-### Scenario A — tell the agent to remember (one line)
+### Scenario A: make the agent remember
 
-Just say it — the agent calls `memory_update` itself:
+Just say it and the agent calls `memory_update` itself:
 
 > "Remember: I prefer concise answers"
 > "Remember: I do Python backend development"
 > "Remember: my goal is to learn agent engineering"
 
-**What the agent should store** (its tool description's discipline):
-- ✅ Stable long-term preferences, self-introductions, project backgrounds, goals
-- ❌ One-off requests ("look at this file" is not a preference)
-- ❌ Credentials, passwords, tokens (**never**)
+**What the agent should store**, a discipline written into its tool description:
 
-### Scenario B — see what it remembers
+- Stable long-term preferences, self-introductions, project background, goals
+- Not one-off requests, such as "look at this file for me"
+- Never credentials, passwords or tokens
+
+### Scenario B: inspect what it remembers
 
 > "What do you remember about me?"
-> "What is my communication-style preference?" (with a keyword)
+> "What is my communication-style preference?"
 
-### Scenario C — edit / forget
+For finer retrieval the agent uses `memory_search`, which covers the personal profile and the current project memory together.
 
-> "Forget my preference for X" (the agent calls `memory_update mode=remove`, hard delete)
-> "I actually switched from project X to project Y" (the agent calls `memory_update mode=invalidate` + `reason`: soft invalidation — history kept, behaviour no longer affected)
+### Scenario C: edit and forget
 
-You can also **hand-edit the profile file** (`$DSH_HOME/user-memory/user.md`) — it
-is plain Markdown, changes take effect immediately, and **deleting the file wipes
-the memory**:
+> "Forget my preference for X", and the agent calls `memory_update mode=remove`, a hard delete
+> "I switched from project X to project Y", and the agent calls `memory_update mode=invalidate` with a `reason`, a soft invalidation: the history stays, but it no longer affects answers
+
+Soft invalidation versus hard deletion: an invalidated entry stays in the file, so it remains auditable and can be revived, while a deletion removes it from the file.
+
+### Scenario D: project memory
+
+Inside a working directory, ask the agent to remember knowledge that belongs to that project only:
+
+> "Remember: this repo uses pnpm only, run pnpm test before committing"
+
+The agent writes it with `scope=workspace`. That memory is visible only to sessions opened in that directory, so other projects stay clean.
+
+### Scenario E: tidy the memory
+
+> "Tidy up my memory"
+
+The agent reports first and acts second: `mode=plan` only lists the operations, `mode=apply` performs them and writes the log. Tidying merges duplicate entries, adds absolute dates next to relative ones, and retires stale entries according to configuration.
+
+### Scenario F: verify cross-session memory
+
+1. In session 1, say "Remember: I prefer concise answers"
+2. **Start a brand-new session** and ask "What is my language preference?"
+3. The agent should answer **without calling any tool**, because the profile is already in the system prompt
+
+You can also **hand-edit the profile file**. It is plain Markdown, changes take effect immediately, and **deleting the file wipes the memory**:
 
 ```markdown
 # User Memory
 
 ## language
-Concise Chinese answers
+<!-- ts: 2026-10-10T01:15:38.092Z -->
+Concise answers
 
 ## communication-style
+<!-- ts: 2026-10-10T01:20:00.000Z -->
 Direct, minimal pleasantries
+
+## old-project
+<!-- ts: 2026-08-14T00:00:00.000Z -->
+<!-- invalid: 2026-10-10T02:00:00.000Z | migrated to agent-platform -->
+Notes about the old project
 ```
-
-### Scenario D — verify cross-session memory (the key demo)
-
-1. In session 1: "Remember: I prefer concise Chinese answers"
-2. **Start a brand-new session** and ask: "What is my language preference?"
-3. The agent answers **without calling any tool** — the profile is already in the
-   system prompt.
 
 ---
 
-## 5. Where does the memory live?
+## 6. Where the memory lives
 
-- **Personal memory is global**: stored under `$DSH_HOME`, shared across **all
-  workspaces and profiles** (web / headless).
-- **Project memory is layered**: `scope=workspace` writes go to a directory keyed
-  by the session's cwd (`sha256(realpath(cwd))`), visible only to sessions opened
-  in that directory — no bleed between projects.
-- **Auto-injected**: every new session carries the current profile plus the
-  current workspace memory index in its system prompt (the index holds topic names
-  and one-line summaries; bodies are fetched on demand with `memory_topic`).
-- **Zero-cost start**: nothing is injected while both are empty.
-- **Under your control**: the files can be viewed, edited, or deleted at any time.
+- **Personal memory is global**: stored under `$DSH_HOME` and shared across all workspaces and profiles
+- **Project memory is layered**: `scope=workspace` writes go to a per-directory location and are visible only to sessions opened there
+- **Auto-injected**: every new session carries the personal profile plus the current project memory index; the index holds topic names and one-line summaries, while bodies are fetched on demand
+- **Zero-cost start**: nothing is injected while both are empty
+- **Under your control**: the files can be viewed, edited or deleted at any time, and they never enter your code repository
 
-### Memory file layout
+### File layout
 
 ```
 $DSH_HOME/user-memory/
-├── user.md                     # global profile: personal preferences, cross-project facts
+├── user.md                     # personal profile: preferences, self-introduction, cross-project facts
+├── consolidation-log.md        # audit log: what each tidying run changed, and why
 └── workspace/
-    └── <hash16>/               # one per working directory (sha256(realpath(cwd)), first 16 hex)
-        ├── MEMORY.md           # index: topic name + one-line summary (regenerated on every write)
-        └── <topic>.md          # topic body: title + timestamp + optional invalidation marker + content
+    └── <hash16>/               # one per working directory; the name is the first 16 hex of sha256 over that directory's realpath
+        ├── MEMORY.md           # index: topic names plus one-line summaries, rebuilt on every write
+        └── <topic>.md          # topic body: title, timestamp, optional invalidation marker, content
 ```
 
-> Security: the injected profile is framed as *reference data, not instructions*;
-> the agent must not follow directives inside it unless you repeat them in the
-> current message (same stance as the official `dsh-session-reference` snapshots).
+### The lifecycle of one memory
+
+```
+write → valid → optional: aging annotation → soft-invalidated → revivable
+          ↑                                            │
+          └──────────── set or append again ←──────────┘
+```
+
+- **Valid**: participates normally in prompt injection and search
+- **Aging annotation**: added once an entry has not been updated for `staleAfterDays`; it is a hint, not a restriction
+- **Soft-invalidated**: the entry keeps its invalidation time and reason, leaves the prompt, and is hidden from search by default
+- **Revived**: writing to the same key brings it back
+- **Evicted**: past `maxBytes`, entries are dropped oldest-first, and invalidated ones make way first
+
+### Security stance
+
+The injected profile is explicitly framed as *reference data, not instructions*. Unless you repeat something in the current message, the agent will not follow directives found inside the profile, the same stance the official `dsh-session-reference` snapshots take.
 
 ---
 
-## 6. Tool reference
+## 7. Tool reference
 
 ### `memory_get`
 
-| Arg | Required | Description |
+| Argument | Required | Description |
 |---|---|---|
-| `query` | no | Keyword; filters entries by key or value |
-| `limit` | no | Max entries (default 50, max 100) |
-| `includeStale` | no | `true` = also return invalidated entries (marked with invalidation time + reason), for auditing |
+| `query` | no | Keyword, filters entries by key or by value |
+| `limit` | no | Maximum entries, default 50, cap 100 |
+| `includeStale` | no | `true` also returns invalidated entries with their invalidation time and reason, for auditing |
 
-Returns `{ ok, total, invalidated, rendered }` (`rendered` is the model-facing text; with `staleAfterDays` set, stale entries carry a `[stale: ...]` annotation).
+Returns `{ ok, total, invalidated, rendered }`. `rendered` is the model-facing text; with `staleAfterDays` enabled, stale entries carry a `[stale: ...]` annotation.
 
 ### `memory_update`
 
-| Arg | Required | Description |
+| Argument | Required | Description |
 |---|---|---|
-| `key` | yes | Preference key, e.g. `language`, `communication-style` |
-| `value` | yes | Preference content (`""` is fine for `invalidate` / `remove`) |
-| `mode` | no | `set` (default, replace/revive) / `append` (add a line) / `remove` (hard delete) / `invalidate` (soft invalidate) |
-| `reason` | no | For `mode=invalidate`: why the memory is no longer correct; stored with the entry for audit |
-| `scope` | no | `global` (default, personal profile) / `workspace` (project memory for the session's directory, stored as topic files) |
+| `key` | yes | Memory key, for example `language` or `communication-style` |
+| `value` | yes | Memory content; an empty string is fine for `invalidate` and `remove` |
+| `mode` | no | `set` replaces and revives, `append` adds a line, `remove` hard-deletes, `invalidate` soft-invalidates |
+| `reason` | no | For `mode=invalidate`, why the memory no longer holds; stored with the entry for audit |
+| `scope` | no | `global` writes the personal profile, `workspace` writes this directory's project memory |
 
-Returns `{ ok, scope, key, mode, bytes, error? }`. **Soft-invalidation semantics**: an invalidated entry stays in the file (auditable), leaves the prompt, and is hidden from `memory_get` by default (pass `includeStale: true` to retrieve it); calling `set` / `append` on the same key revives it.
+Returns `{ ok, scope, key, mode, bytes, error? }`.
+
+**Soft-invalidation semantics**: an invalidated entry stays in the file, leaves the prompt, and is hidden from `memory_get` by default; pass `includeStale: true` to read it back, and `set` or `append` on the same key revives it.
 
 ### `memory_search`
 
-| Arg | Required | Description |
+| Argument | Required | Description |
 |---|---|---|
-| `query` | no | Keyword(s), space-separated (CJK substrings work); empty = list recent topics |
-| `limit` | no | Max results (default 10, max 20) |
-| `includeStale` | no | `true` = also search invalidated entries (marked) |
+| `query` | no | Keywords, space separated, CJK substrings supported; empty lists the most recent topics |
+| `limit` | no | Maximum results, default 10, cap 20 |
+| `includeStale` | no | `true` also searches invalidated entries, marked as such |
 
-Returns `{ ok, total, results: [{ scope, topic, score, updatedAt, snippet }] }`. Scoring: topic-name hit ×3, body occurrences ×1 (capped at 5), all terms matched +4; global and workspace hits are ranked together.
+Returns `{ ok, total, results }`, where each result carries `scope`, `topic`, `score`, `updatedAt` and `snippet`. Scoring: a topic-name hit is worth 3 points, each body occurrence 1 point capped at 5, and matching every keyword adds 4 more; personal and project hits are ranked together.
 
 ### `memory_topic`
 
-| Arg | Required | Description |
+| Argument | Required | Description |
 |---|---|---|
-| `topic` | yes | Workspace topic name (from the injected index or `memory_search` results) |
+| `topic` | yes | Project memory topic name, taken from the injected index or from `memory_search` results |
 
-Returns `{ ok, topic, updatedAt, invalidated, invalidReason, body }` — the full topic text (lazy-loaded; it never enters the per-turn prompt).
+Returns `{ ok, topic, updatedAt, invalidated, invalidReason, body }`, the full topic text. It is lazy-loaded and never enters the per-turn prompt.
 
 ### `memory_consolidate`
 
-| Arg | Required | Description |
+| Argument | Required | Description |
 |---|---|---|
-| `mode` | no | `plan` (default — report the ops) / `apply` (perform them and write the log) |
-| `useModel` | no | Also ask the configured consolidation model (needs `consolidateProvider` + `consolidateModel`) |
+| `mode` | no | `plan` only reports the operations, `apply` performs them and writes the audit log |
+| `useModel` | no | Whether to also ask the configured tidying model; requires a configured provider and model |
 
-**What consolidation does**:
+Tidying does four things:
 
-1. **Merge duplicates** — entries whose values normalize to the same text keep only the newest; the rest are soft-invalidated with a "same value as X" reason;
-2. **Anchor relative dates** — entries mentioning today/tomorrow/next week gain one absolute recorded-date line (added once; your own words are never rewritten);
-3. **Aging** — entries past `staleAfterDays` are reported, entries past `autoInvalidateAfterDays` are soft-invalidated;
-4. **Model assistance** (optional) — one auxiliary model call proposes `add`/`merge`/`rewrite`/`invalidate`/`topic-*` ops which are validated before use; an unavailable or malformed answer degrades to the deterministic result.
+1. **Merge duplicates**: entries whose values normalize to the same text keep only the newest; the rest are soft-invalidated with a note saying which entry they duplicate
+2. **Anchor relative dates**: entries mentioning today, tomorrow or next week gain one absolute recorded-date line, added once, without rewriting your own words
+3. **Aging**: entries past `staleAfterDays` are reported, entries past `autoInvalidateAfterDays` are soft-invalidated
+4. **Model assistance**: one auxiliary model call proposes `add`, `merge`, `rewrite`, `invalidate`, `topic-add` and `topic-invalidate` operations, each validated before use; an unavailable model or a malformed answer degrades to the deterministic result
 
-Every run is appended to `$DSH_HOME/user-memory/consolidation-log.md`: when it ran, what triggered it (manual / turn boundary), and each applied or skipped op with its reason — **you can always see what changed in your memory and why**.
+Every run is appended to `$DSH_HOME/user-memory/consolidation-log.md`, recording the time, what triggered it, and each applied or skipped operation with its reason, so **you can always see what changed in your memory and why**.
 
 ---
 
-## 7. Development
+## 8. FAQ
+
+**The agent seems not to know me in a new session. What now?**
+
+First confirm that `dsh.profile.bundles` in your profile lists `dsh-tool-user-memory`, then confirm the session was started after the install. Another common cause is an empty profile: **an empty profile injects nothing**, which is deliberate.
+
+**Will the memory grow until it crowds out every prompt?**
+
+There are two budgets. On the injection side, `promptMaxBytes` defaults to 2048 bytes and keeps the newest entries; on the file side, `maxBytes` defaults to 8192 bytes and evicts oldest-first, with invalidated entries making way first. You can also enable `autoInvalidateAfterDays` so tidying retires entries that were never confirmed again.
+
+**How do I erase everything?**
+
+Delete `$DSH_HOME/user-memory/user.md`; project memory lives under `$DSH_HOME/user-memory/workspace/`, so delete the directory you no longer want. Deleting the files is forgetting, and there is no hidden copy.
+
+**Should I invalidate or delete?**
+
+Use soft invalidation for anything superseded: the record stays, remains auditable, and can be revived, yet it no longer affects answers. Delete only what you truly do not want on disk. Tidying defaults to soft invalidation as well.
+
+**Could my credentials end up in there?**
+
+The tool description is a hard constraint: the agent is told never to store credentials, passwords or tokens. Content you hand-write into the profile file is of course yours to decide, and that file stays on your machine.
+
+**Does it need network access or extra spending?**
+
+By default, no. Almost everything is local and deterministic, including writes, search, and the merging and aging parts of tidying. Only model-assisted tidying calls a model, and only when you configure a provider and model, which consumes that model's tokens as usual.
+
+**Does project memory travel with git?**
+
+No. It lives under `$DSH_HOME`, never inside your repository, and is never committed.
+
+**How is this related to the official repository?**
+
+It is not. This is an independent open-source plugin in the community ecosystem, built on the officially documented plugin interfaces.
+
+---
+
+## 9. Development
 
 ```sh
 pnpm install
-pnpm test           # 68/68: unit + storage integration + workspace memory + consolidation + harness integration + full AgentLoop test
-pnpm run build       # tsc → lib/
+pnpm test           # 68/68: unit + storage integration + project memory + consolidation + harness integration + full AgentLoop test
+pnpm run build      # tsc compiles to lib/
 ```
 
-- The storage layer deliberately uses `node:fs` directly (plugin-internal trusted
-  state, like settings / session persistence), not the sandboxed model-facing
-  `ctx.fs` seam.
-- Layout: `src/index.ts` (plugin) `profile.ts` (profile document model) `store.ts`
-  (atomic-write profile store) `workspace.ts` (workspace memory: topic files + index
-  + keyword search) `tools.ts` (the four tools) `prompt.ts` (profile + workspace index injection).
+- Tests are green on the current dependency lines, 68 each on `0.1.7-alpha.1` and `0.2.0-rc.2`
+- The storage layer deliberately uses `node:fs` directly, because it is plugin-internal trusted state like settings or session persistence, not the sandboxed model-facing `ctx.fs` seam
+- Code layout:
+
+| File | Responsibility |
+|---|---|
+| `src/index.ts` | The plugin itself: config, wiring, turn-boundary trigger |
+| `src/profile.ts` | Pure document model of the personal profile: parse, serialize, merge, evict, render, freshness annotation |
+| `src/store.ts` | Atomic-write store for the personal profile, including budget eviction |
+| `src/workspace.ts` | Project memory layer: topic files, index rebuild, keyword search |
+| `src/consolidate.ts` | Background tidying: deterministic rules, model-proposal parsing, apply and audit log |
+| `src/tools.ts` | The five model-facing tools |
+| `src/prompt.ts` | Prompt injection: profile and project memory index |
 
 ---
 
-## 8. Roadmap (v2)
+## 10. Roadmap
 
-The v2 roadmap follows the 2026-10 survey of memory architectures at OpenAI (Dreaming), Claude Code (layered auto-memory), Letta (sleep-time compute / filesystem benchmarks), Mem0, and Zep (bi-temporal invalidation):
+The v2 plan follows a 2026-10 survey of memory architectures, including OpenAI's three evaluation axes, Claude Code's layered auto-memory, Letta's sleep-time compute and filesystem benchmarks, Mem0, and Zep's bi-temporal invalidation.
 
-- ✅ **Temporal semantics** (implemented in 0.2.0): soft invalidation (`mode=invalidate` + `reason`, history preserved, never deleted) + aging config `staleAfterDays` + `memory_get(includeStale)` audit, so memories "stay correct over time" (benchmarked against OpenAI's three axes: fact recall / preference adherence / temporal correctness)
-- ✅ **Memory layering** (implemented in 0.2.0): global profile + per-workspace memory (index + topic files, lazy-loaded, mirroring Claude Code auto-memory); workspace identity = `sha256(realpath(cwd))`, resolved automatically from the session's cwd
-- ✅ **`memory_search`** (implemented in 0.2.0): file-based search first (keyword + scoring + one-line snippets); embedding recall only becomes worthwhile at a much larger scale (> ~500 entries; Letta benchmark: plain file search already beats Mem0's graph approach at personal scale) ([issue #4](https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/4))
-- ✅ **Background consolidation ("dreaming")** (implemented in 0.2.0): asynchronous **at turn boundaries** (opt-in, debounced, never blocks the turn) plus a manual `memory_consolidate`; deterministic rules (duplicate merge / relative-date anchoring / aging) as the base, with optional model assistance (`consolidateProvider` + `consolidateModel`) proposing validated ops; every run lands in an auditable `consolidation-log.md`. **Not yet**: idle / scheduled triggers (the `schedule` subsystem) — tracked in [issue #2](https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/2)
-- **Review-style consolidation (session summaries)**: a subagent reads the current profile plus a session summary and emits a structured diff — semantic convergence (merging one fact worded differently, extracting new preferences from a conversation) plus "once per session / skip short conversations / soft budget cap", complementing today's deterministic rules ([issue #5](https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/5))
-- Per-user profiles (keyed by session identity)
+- ✅ **Temporal semantics**, shipped in 0.2.0: soft invalidation, aging annotations and `includeStale` auditing, so memories stay correct over time
+- ✅ **Layered memory**, shipped in 0.2.0: personal profile plus project memory, index injection with lazy bodies; project identity is the sha256 of the session directory realpath
+- ✅ **File-first search**, shipped in 0.2.0: keyword scoring with one-line snippets. Embedding recall waits until the entry count is far larger, see [issue #4][issue4]
+- ✅ **Background tidying**, shipped in 0.2.0: asynchronous at turn boundaries plus a manual tool, deterministic rules as the base, optional model assistance, always with an audit log
+- **Review-style consolidation**: a subagent reads the profile and a session summary and emits a structured diff, for semantic convergence, plus once-per-session, short-conversation skip and a soft budget cap, see [issue #5][issue5]
+- **More triggers**: session idle, compaction and scheduled runs, see [issue #2][issue2]
+- **Per-entry creation time**: record the first write time separately for every memory, see [issue #3][issue3]
+- Per-user profiles, keyed by session identity
 
 ---
 
 ## License
 
 MIT
+
+[badge-npm]: https://img.shields.io/npm/v/dsh-tool-user-memory
+[badge-release]: https://img.shields.io/github/v/release/IAMLieutenant/dsh-tool-user-memory
+[badge-license]: https://img.shields.io/badge/license-MIT-blue
+[badge-dsh]: https://img.shields.io/badge/DSH-0.1.7%20%7C%200.2.0-blue
+
+[npm-url]: https://www.npmjs.com/package/dsh-tool-user-memory
+[release-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.0
+[changelog]: CHANGELOG.md
+[readme-zh]: README.md
+[topic]: https://github.com/topics/dsh-plugin
+[harness]: https://github.com/deepseek-ai/deepseek-harness
+[issue2]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/2
+[issue3]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/3
+[issue4]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/4
+[issue5]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues/5
+
+[s1]: #1-the-problem-it-solves
+[s2]: #2-capabilities
+[s3]: #3-install
+[s4]: #4-verify-the-install
+[s5]: #5-usage-guide
+[s6]: #6-where-the-memory-lives
+[s7]: #7-tool-reference
+[s8]: #8-faq
+[s9]: #9-development
+[s10]: #10-roadmap

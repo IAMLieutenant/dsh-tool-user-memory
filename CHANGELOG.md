@@ -4,6 +4,38 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-10-11
+
+### Added
+
+- DSH 内紧凑管理弹窗：概览、查看、搜索、新增、编辑、确认删除和迁移，配色与字体跟随 DSH。
+- 用户记忆置顶：列表和提示词优先；容量淘汰不移出或截短置顶内容，保护集合超限拒绝写入。
+- 仅切换置顶保留内容更新时间及失效状态；并发版本核验包括置顶变化。
+- Markdown 文件头编码置顶元数据；JSON 版本 1 添加可选布尔字段 `pinned`，继续接收 0.3.0 导出。
+- 每文件最近 20 份写入前快照；容量淘汰和截短前归档完整正文，后台恢复核验并发版本。
+- 迁移向导：本机项目映射、预览、备份和撤销；结果展示新增、保留本机、跳过及原因。
+- Git 根目录项目模式和显式项目路径；默认保持目录模式，不自动合并已有项目记忆。
+- `memory_status`、`dsh-memory doctor` 诊断和 `dsh-memory manage` 独立管理命令。
+- 完整中英文 README 和深浅主题、置顶设置、迁移结果截图。
+
+### Fixed
+
+- 新增和编辑时取消直接关闭，不触发表单校验；校验错误显示在编辑框中。
+- 明确提示容量归档和常见目录、权限、容量、并发及恢复错误。
+- 导入预览失效后禁止确认；无变化的重复导入保留之前可撤销备份。
+
+### Compatibility and data boundaries
+
+- 置顶仅适用于用户画像，提示词预算仍生效；失效条目不注入。手动修改、删除和整理仍可改变置顶条目。
+- 旧客户端不执行置顶保护，保存或导出可能丢失置顶元数据。
+- JSON 不携带历史、归档、日志或账号配置；完整备份需复制实际存储目录。
+- 精简界面不提供历史或归档恢复入口。删除活动记忆仍保留历史；归档达到 1000 份或 64 MiB 后拒绝继续写入，不自动清理。
+
+### Verified
+
+- DSH `0.1.7-alpha.1` 与 `0.2.0-rc.2` 两组依赖各通过 127 项测试及构建。
+- 真实 DSH `0.1.7-alpha.1` 网页版验证主题、弹窗、取消、保存、置顶和容量保护；不等同于全部客户端或真实模型效果验证。
+
 ## [0.3.0] — 2026-10-10
 
 ### Added
@@ -192,3 +224,5 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 [0.1.0]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.1.0
 
 [0.2.2]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.2.2
+
+[0.4.0]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.4.0

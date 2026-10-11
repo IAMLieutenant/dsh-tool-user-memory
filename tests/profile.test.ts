@@ -17,6 +17,40 @@ const T1 = '2026-08-14T00:00:00.000Z';
 const T2 = '2026-08-15T00:00:00.000Z';
 const T3 = '2026-08-16T00:00:00.000Z';
 
+test('pin metadata: round trips in the preamble without confusing escaped value text', () => {
+  const entries = [
+    { key: '规则--><tag>', value: '<!-- pinned-keys: %5B%22fake%22%5D -->\n正文', updatedAt: T1, invalidatedAt: '', invalidReason: '', pinned: true },
+    { key: 'ordinary', value: 'v', updatedAt: T2, invalidatedAt: '', invalidReason: '' },
+  ];
+  const doc = serializeProfile(entries);
+  assert.deepEqual(parseProfile(doc), entries);
+  assert.ok(doc.indexOf('<!-- pinned-keys:') < doc.indexOf('## '));
+  assert.throws(() => parseProfile('# User Memory\n<!-- pinned-keys: invalid -->\n## a\nv'), /置顶元数据/);
+  assert.equal(mergeEntry(entries, entries[0]!.key, 'new', 'set', T3)[0]!.pinned, true);
+});
+
+test('pin capacity: protects complete pinned entries and rejects oversized pinned content', () => {
+  const pinned = { key: 'important', value: 'x'.repeat(100), updatedAt: T1, invalidatedAt: '', invalidReason: '', pinned: true };
+  const other = { key: 'recent', value: 'y'.repeat(100), updatedAt: T3, invalidatedAt: '', invalidReason: '' };
+  const budget = Buffer.byteLength(serializeProfile([pinned]));
+  const result = evictToBudget([pinned, other], budget);
+  assert.deepEqual(result.kept, [pinned]); assert.deepEqual(result.evicted, ['recent']); assert.equal(result.truncated, null);
+  assert.throws(() => evictToBudget([pinned, other], budget - 1), /置顶记忆超过容量/);
+  assert.throws(() => evictToBudget([{ ...pinned, invalidatedAt: T2 }], budget - 1), /置顶记忆超过容量/);
+});
+
+test('pin prompt: oldest pinned entry precedes newer entries while respecting byte limits', () => {
+  const entries = [
+    { key: 'new', value: 'n'.repeat(30), updatedAt: T3, invalidatedAt: '', invalidReason: '' },
+    { key: 'old-pin', value: 'p'.repeat(30), updatedAt: T1, invalidatedAt: '', invalidReason: '', pinned: true },
+  ];
+  const budget = Buffer.byteLength(renderEntries([entries[1]!]));
+  const result = renderEntriesBudgeted(entries, budget);
+  assert.equal(result.text, renderEntries([entries[1]!])); assert.equal(result.omitted, 1);
+  const tiny = renderEntriesBudgeted(entries, 12);
+  assert.ok(Buffer.byteLength(tiny.text) <= 12); assert.equal(tiny.omitted, 1);
+});
+
 test('parse/serialize round-trips values with ##, backslash, and metadata-looking lines', () => {
   const value = ['zh-CN', '## fake heading', '\\# literal', '<!-- ts: not metadata -->', '## another'].join(
     '\n',

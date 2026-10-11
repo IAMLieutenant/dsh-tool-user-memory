@@ -12,6 +12,7 @@ import { promises as fsp, readFileSync } from 'node:fs';
 import * as nodePath from 'node:path';
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths';
 import { withDocumentLock } from './lock.ts';
+import { archiveEntries, recordHistory, documentHash, readMemoryDocument } from './history.ts';
 import {
   RESERVED_KEYS,
   evictToBudget,
@@ -40,6 +41,8 @@ export interface UpdateResult {
   evicted: string[];
   /** Key whose value was truncated because it alone exceeded the budget. */
   truncated: string | null;
+  /** Complete entries removed from the active profile are retained here. */
+  archivePath?: string | null;
   error?: string;
 }
 
@@ -54,7 +57,9 @@ export interface MemoryStore {
   list(): Promise<ProfileEntry[]>;
   /** Sync variant used by the system-prompt variable provider. */
   listSync(): ProfileEntry[];
-  update(key: string, value: string, mode: MergeMode, invalidateReason?: string, guard?: MemoryMutationGuard): Promise<UpdateResult>;
+  update(key: string, value: string, mode: MergeMode, invalidateReason?: string, guard?: MemoryMutationGuard, pinned?: boolean): Promise<UpdateResult>;
+  /** Change retention priority without refreshing content time or reactivating it. */
+  setPinned(key: string, pinned: boolean, guard?: MemoryMutationGuard): Promise<UpdateResult>;
   /**
    * Replace an entry's value WITHOUT refreshing its updatedAt. An edit is not
    * a fresh confirmation, so the entry keeps its age.
@@ -65,6 +70,7 @@ export interface MemoryStore {
 /** Checked inside the document lock, so an old plan cannot overwrite a newer fact. */
 export interface MemoryMutationGuard {
   expected: ProfileEntry | null;
+  expectedDocumentHash?: string;
   /** A merge may retire a source only while its destination still exists unchanged. */
   dependency?: ProfileEntry;
 }
@@ -75,7 +81,7 @@ function guardError(current: ProfileEntry[], key: string, guard?: MemoryMutation
   const same = (a: ProfileEntry | null, b: ProfileEntry | null): boolean =>
     a === null || b === null ? a === b :
       a.key === b.key && a.value === b.value && a.updatedAt === b.updatedAt &&
-      a.invalidatedAt === b.invalidatedAt && a.invalidReason === b.invalidReason;
+      a.invalidatedAt === b.invalidatedAt && a.invalidReason === b.invalidReason && !!a.pinned === !!b.pinned;
   if (!same(actual, guard.expected)) {
     return `memory '${key}' changed since the consolidation plan; skipped`;
   }
@@ -148,6 +154,7 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
     mode: MergeMode,
     invalidateReason = '',
     guard?: MemoryMutationGuard,
+    pinned?: boolean,
   ): Promise<UpdateResult> {
     const trimmedKey = key.trim();
     const keyError = validateKey(trimmedKey);
@@ -168,7 +175,9 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
     const now = new Date().toISOString();
     try {
       return await withDocumentLock<UpdateResult>(`${filePath}.lock`, async () => {
-        const current = parseDoc(await read());
+        const doc = await readMemoryDocument(filePath);
+        if (guard?.expectedDocumentHash && documentHash(doc) !== guard.expectedDocumentHash) return failure(trimmedKey, mode, 'memory changed; refresh before editing');
+        const current = parseDoc(doc ?? '');
         const conflict = guardError(current, trimmedKey, guard);
         if (conflict !== null) return failure(trimmedKey, mode, conflict);
         if (mode === 'invalidate' && !current.some((entry) => entry.key === trimmedKey)) {
@@ -183,11 +192,35 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
           };
         }
         const merged = mergeEntry(current, trimmedKey, value, mode, now, invalidateReason);
+        if (pinned !== undefined) for (const entry of merged) if (entry.key === trimmedKey) {
+          if (pinned) entry.pinned = true; else delete entry.pinned;
+        }
         return await commit(merged, trimmedKey, mode, now);
       });
     } catch (error) {
       return failure(trimmedKey, mode, `write failed: ${describeError(error)}`);
     }
+  }
+
+  async function setPinned(key: string, pinned: boolean, guard?: MemoryMutationGuard): Promise<UpdateResult> {
+    const trimmedKey = key.trim();
+    if (validateKey(trimmedKey) || RESERVED_KEYS.has(trimmedKey)) return failure(key, 'set', '记忆名称无效');
+    try {
+      return await withDocumentLock(`${filePath}.lock`, async () => {
+        const doc = await readMemoryDocument(filePath);
+        if (guard?.expectedDocumentHash && documentHash(doc) !== guard.expectedDocumentHash) return failure(key, 'set', 'memory changed; refresh before editing');
+        const current = parseDoc(doc ?? '');
+        const conflict = guardError(current, trimmedKey, guard);
+        if (conflict) return failure(key, 'set', conflict);
+        if (!current.some(e => e.key === trimmedKey)) return failure(key, 'set', '记忆不存在，请重新打开管理窗口');
+        const merged = current.map(e => {
+          const copy = { ...e };
+          if (copy.key === trimmedKey) { if (pinned) copy.pinned = true; else delete copy.pinned; }
+          return copy;
+        });
+        return commit(merged, trimmedKey, 'set', new Date().toISOString(), `${pinned ? 'pin' : 'unpin'}:${trimmedKey}`);
+      });
+    } catch (error) { return failure(key, 'set', `write failed: ${describeError(error)}`); }
   }
 
   /**
@@ -207,7 +240,9 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
     const now = new Date().toISOString();
     try {
       return await withDocumentLock<UpdateResult>(`${filePath}.lock`, async () => {
-        const current = parseDoc(await read());
+        const doc = await readMemoryDocument(filePath);
+        if (guard?.expectedDocumentHash && documentHash(doc) !== guard.expectedDocumentHash) return failure(trimmedKey, 'set', 'memory changed; refresh before editing');
+        const current = parseDoc(doc ?? '');
         const conflict = guardError(current, trimmedKey, guard);
         if (conflict !== null) return failure(trimmedKey, 'set', conflict);
         const target = current.find((entry) => entry.key === trimmedKey);
@@ -230,6 +265,7 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
     key: string,
     mode: MergeMode,
     now: string,
+    label = `${mode}:${key}`,
   ): Promise<UpdateResult> {
     const stamp = `\n## updated-at\n${now}\n`;
     const budget = maxBytes - Buffer.byteLength(stamp, 'utf8');
@@ -238,6 +274,10 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
     if (Buffer.byteLength(finalDoc, 'utf8') > maxBytes) {
       return failure(key, mode, 'maxBytes is too small for the profile metadata; nothing was written');
     }
+    const before = await readMemoryDocument(filePath);
+    await recordHistory(filePath, before, finalDoc, label);
+    const archived = merged.filter(entry => evicted.includes(entry.key) || entry.key === truncated);
+    const archivePath = await archiveEntries(filePath, archived);
     await write(finalDoc);
     return {
       ok: true,
@@ -246,10 +286,11 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
       bytes: Buffer.byteLength(finalDoc, 'utf8'),
       evicted,
       truncated,
+      archivePath,
     };
   }
 
-  return { path: () => filePath, read, readSync, list, listSync, update, rewrite };
+  return { path: () => filePath, read, readSync, list, listSync, update, rewrite, setPinned };
 }
 
 /** One structured failure shape, so every rejection path reports identically. */

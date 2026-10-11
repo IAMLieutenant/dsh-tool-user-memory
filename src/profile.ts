@@ -31,6 +31,8 @@ export interface ProfileEntry {
   invalidatedAt: string;
   /** Why the entry was invalidated ('' when valid, or when no reason was given). */
   invalidReason: string;
+  /** Optional user-controlled retention priority; absent means unpinned. */
+  pinned?: boolean;
 }
 
 export type MergeMode = 'set' | 'append' | 'remove' | 'invalidate';
@@ -44,6 +46,7 @@ const INVALID_PREFIX = '<!-- invalid: ';
 const INVALID_SUFFIX = ' -->';
 const ESCAPE_FIRST: ReadonlySet<string> = new Set(['#', '\\', '<']);
 const REASON_MAX_CHARS = 200;
+const PIN_PREFIX = '<!-- pinned-keys: ';
 
 /** Validate a user-supplied key (already trimmed) before writing it. */
 export function validateKey(key: string): string | null {
@@ -65,7 +68,18 @@ function unescapeLine(line: string): string {
 export function parseProfile(doc: string): ProfileEntry[] {
   const entries: ProfileEntry[] = [];
   let current: ProfileEntry | null = null;
+  let pinnedKeys: string[] | null = null;
   for (const rawLine of doc.split(/\r?\n/)) {
+    // Preamble metadata is ignored by legacy readers, never mistaken for a value.
+    if (!current && rawLine.startsWith(PIN_PREFIX)) {
+      if (pinnedKeys !== null || !rawLine.endsWith(TS_SUFFIX)) throw new Error('置顶元数据格式无效，保存已停止；请从历史快照恢复');
+      try {
+        const keys = JSON.parse(decodeURIComponent(rawLine.slice(PIN_PREFIX.length, -TS_SUFFIX.length)));
+        if (!Array.isArray(keys) || !keys.every(k => typeof k === 'string' && !validateKey(k) && !RESERVED_KEYS.has(k))) throw new Error();
+        pinnedKeys = keys;
+      } catch { throw new Error('置顶元数据格式无效，保存已停止；请从历史快照恢复'); }
+      continue;
+    }
     const heading = /^##\s+(.+?)\s*$/.exec(rawLine);
     if (heading) {
       if (current) entries.push(current);
@@ -94,12 +108,15 @@ export function parseProfile(doc: string): ProfileEntry[] {
     }
   }
   if (current) entries.push(current);
+  for (const entry of entries) if (pinnedKeys?.includes(entry.key)) entry.pinned = true;
   return entries;
 }
 
 /** Serialize entries back into the canonical document (reserved keys dropped). */
 export function serializeProfile(entries: ProfileEntry[]): string {
   const lines = ['# User Memory'];
+  const pins = entries.filter(e => e.pinned && e.key && !RESERVED_KEYS.has(e.key)).map(e => e.key);
+  if (pins.length) lines.push(`${PIN_PREFIX}${encodeURIComponent(JSON.stringify(pins))}${TS_SUFFIX}`);
   for (const { key, value, updatedAt, invalidatedAt, invalidReason } of entries) {
     if (key === '' || RESERVED_KEYS.has(key)) continue;
     lines.push('', `## ${key}`);
@@ -154,6 +171,7 @@ export function mergeEntry(
       : value;
   // set/append revalidate the key: any previous invalidation is cleared.
   const updated: ProfileEntry = {
+    ...(existing?.pinned ? { pinned: true } : {}),
     key: trimmedKey,
     value: mergedValue,
     updatedAt: now,
@@ -179,6 +197,11 @@ export function orderByRecency(entries: ProfileEntry[]): ProfileEntry[] {
       return a.index - b.index;
     })
     .map(({ entry }) => entry);
+}
+
+/** Pinned entries precede other entries; recency resolves priority ties. */
+export function orderByPriority(entries: ProfileEntry[]): ProfileEntry[] {
+  return orderByRecency(entries).sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned));
 }
 
 /** Options for freshness-aware rendering (all optional; defaults = no annotation). */
@@ -236,7 +259,7 @@ export function renderEntriesBudgeted(
   maxBytes: number,
   options: RenderOptions = {},
 ): { text: string; omitted: number } {
-  const ordered = orderByRecency(entries.filter((entry) => !RESERVED_KEYS.has(entry.key)));
+  const ordered = orderByPriority(entries.filter((entry) => !RESERVED_KEYS.has(entry.key)));
   if (ordered.length === 0) return { text: '', omitted: 0 };
   const out: ProfileEntry[] = [ordered[0]!];
   const first = renderEntries(out, options);
@@ -270,13 +293,19 @@ export function evictToBudget(entries: ProfileEntry[], budgetBytes: number): Evi
   let kept = entries.slice();
   const evicted: string[] = [];
   let truncated: string | null = null;
+  const pinned = kept.filter(e => e.pinned);
+  if (pinned.length && byteLength(serializeProfile(pinned)) > budgetBytes) {
+    throw new Error('置顶记忆超过容量，保存已取消；请缩短置顶内容、取消部分置顶或提高 maxBytes');
+  }
 
   while (byteLength(serializeProfile(kept)) > budgetBytes && kept.length > 1) {
     // Invalidated entries are dead weight: evict them before any live entry,
     // then by oldest updatedAt.
-    let oldest = 0;
-    for (let i = 1; i < kept.length; i += 1) {
+    let oldest = kept.findIndex(e => !e.pinned);
+    if (oldest < 0) break;
+    for (let i = 0; i < kept.length; i += 1) {
       const candidate = kept[i]!;
+      if (candidate.pinned) continue;
       const incumbent = kept[oldest]!;
       const candidateDead = candidate.invalidatedAt !== '';
       const incumbentDead = incumbent.invalidatedAt !== '';

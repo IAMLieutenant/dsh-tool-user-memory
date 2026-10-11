@@ -404,6 +404,7 @@ export function buildConsolidationRequest(input: ModelProposalInput): {
       key: e.key,
       value: e.value,
       updatedAt: e.updatedAt,
+      ...(e.pinned ? { pinned: true } : {}),
       ...(e.invalidatedAt === '' ? {} : { invalidatedAt: e.invalidatedAt }),
     })),
     workspaceTopics: input.topics.map((t) => ({

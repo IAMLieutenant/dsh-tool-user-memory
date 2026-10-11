@@ -33,6 +33,9 @@ import { DEFAULT_MAX_BYTES, createMemoryStore } from './store.ts';
 import { registerMemoryTools } from './tools.ts';
 import { registerProfilePrompt } from './prompt.ts';
 import { createWorkspaceMemory } from './workspace.ts';
+import { installManagerWeb } from './manager-web.ts';
+import { createMemoryManager } from './manager.ts';
+import { defineTool } from '@deepseek-ai/dsh-tools';
 
 export const name = 'tool-user-memory';
 
@@ -52,12 +55,14 @@ export const Config = z.object({
   path: z.string().default('').description('Profile file path; defaults to $DSH_HOME/user-memory/user.md'),
   maxBytes: z
     .number()
+    .min(1)
+    .max(16 * 1024 * 1024)
     .default(DEFAULT_MAX_BYTES)
-    .description('Max profile file bytes; oldest entries are evicted first when exceeded'),
+    .description('Integer profile byte limit; complete entries are archived before eviction or truncation'),
   promptMaxBytes: z
     .number()
     .default(DEFAULT_PROMPT_MAX_BYTES)
-    .description('Per-turn prompt injection byte budget (newest entries first); 0 injects the full profile'),
+    .description('Per-turn prompt injection byte budget (pinned entries first, then newest); 0 injects all valid entries'),
   includeInPrompt: z
     .boolean()
     .default(true)
@@ -80,6 +85,8 @@ export const Config = z.object({
     .string()
     .default('')
     .description('Override the workspace memory base directory (defaults to $DSH_HOME/user-memory/workspace); mainly for testing'),
+  workspaceMode: z.union(['directory', 'git-root']).default('directory').description('Project identity: directory (compatible default) or nearest Git root'),
+  projectPath: z.string().default('').description('Explicit existing project directory; overrides session cwd and workspaceMode'),
   autoConsolidate: z
     .boolean()
     .default(false)
@@ -124,6 +131,8 @@ export interface UserMemoryConfig {
   staleAfterDays: number;
   workspacePromptMaxBytes: number;
   workspaceBase: string;
+  workspaceMode?: 'directory' | 'git-root';
+  projectPath?: string;
   autoConsolidate: boolean;
   consolidateMinIntervalMs: number;
   autoInvalidateAfterDays: number;
@@ -160,6 +169,8 @@ export function apply(ctx: Context, config: UserMemoryConfig): void {
     staleAfterDays,
     config.workspacePromptMaxBytes ?? DEFAULT_WORKSPACE_PROMPT_MAX_BYTES,
     workspaceBase,
+    config.workspaceMode,
+    config.projectPath,
   );
 
   /**
@@ -222,7 +233,21 @@ export function apply(ctx: Context, config: UserMemoryConfig): void {
     return { plan, record, mode: request.mode, ...(modelError === undefined ? {} : { modelError }) };
   }
 
-  registerMemoryTools(ctx, store, { staleAfterDays, workspaceBase, consolidate, maxBytes: config.maxBytes });
+  registerMemoryTools(ctx, store, { staleAfterDays, workspaceBase, consolidate, maxBytes: config.maxBytes,
+    workspaceMode: config.workspaceMode, projectPath: config.projectPath });
+  const managerOptions = { profilePath: store.path(), workspaceBase, maxBytes: config.maxBytes,
+    workspaceMode: config.workspaceMode, projectPath: config.projectPath, promptMaxBytes: config.promptMaxBytes,
+    workspacePromptMaxBytes: config.workspacePromptMaxBytes, includeInPrompt: config.includeInPrompt, staleAfterDays };
+  installManagerWeb(ctx, managerOptions);
+  const manager = createMemoryManager(managerOptions);
+  ctx.tools.register(defineTool({ name: 'memory_status',
+    description: 'Diagnose memory storage and project identity using the running plugin configuration. Returns counts and paths, never memory contents. The local web manager is available at /_dsh/user-memory on the DSH web server. No model calls are made.',
+    parameters: {}, output: { schema: { type: 'object', additionalProperties: true }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }] },
+    async execute(_args: {}, exec: { agent?: { session?: { header?: { cwd?: string } } } }) {
+      try { return JSON.parse(JSON.stringify({ ok: true, ...await manager.diagnose(exec.agent?.session?.header?.cwd), managerPath: '/_dsh/user-memory' })); }
+      catch (error) { return { ok: false, error: (error as Error).message }; }
+    },
+  }));
 
   if (config.autoConsolidate === true) {
     const minInterval = config.consolidateMinIntervalMs ?? DEFAULT_CONSOLIDATE_MIN_INTERVAL_MS;
@@ -234,10 +259,10 @@ export function apply(ctx: Context, config: UserMemoryConfig): void {
       running = true;
       lastRunAt = Date.now();
       try {
-        const cwd = agent?.session?.header?.cwd;
+        const cwd = config.projectPath || agent?.session?.header?.cwd;
         const ws =
           typeof cwd === 'string' && cwd !== ''
-            ? await createWorkspaceMemory({ cwd, baseDir: workspaceBase })
+            ? await createWorkspaceMemory({ cwd, baseDir: workspaceBase, mode: config.workspaceMode, projectPath: config.projectPath })
             : null;
         await consolidate({
           source: 'turn',

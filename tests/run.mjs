@@ -20,6 +20,7 @@ const files =
         'tests/store.test.ts',
         'tests/workspace.test.ts',
         'tests/migration.test.ts',
+        'tests/manager.test.ts',
         'tests/consolidate.test.ts',
         'tests/harness.test.ts',
         'tests/loop.test.ts',

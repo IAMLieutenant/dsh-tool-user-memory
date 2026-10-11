@@ -4,9 +4,10 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths';
 import { withDocumentLock } from './lock.ts';
+import { recordHistory } from './history.ts';
 import { RESERVED_KEYS, parseProfile, serializeProfile, validateKey, type ProfileEntry } from './profile.ts';
 import { TOPIC_MAX_BYTES, buildIndexText, normalizeTopic, parseTopicFile, serializeTopicFile,
-  workspaceHashOf, type WorkspaceTopic } from './workspace.ts';
+  workspaceLocation, projectDirectory, type WorkspaceMode, type WorkspaceTopic } from './workspace.ts';
 
 export const BUNDLE_MAX_BYTES = 16 * 1024 * 1024;
 const MAX_ITEMS = 10_000;
@@ -23,6 +24,7 @@ export interface MigrationOptions {
   profilePath?: string;
   workspaceBase?: string;
   maxBytes?: number;
+  workspaceMode?: WorkspaceMode;
 }
 export type ConflictPolicy = 'keep-local' | 'use-imported';
 export interface ProjectMapping { id: string; path: string }
@@ -109,7 +111,8 @@ function profileEntries(value: unknown): ProfileEntry[] {
     const item = record(raw, 'profile entry');
     const key = string(item.key, 'key', 128);
     if (key !== key.trim() || validateKey(key) || RESERVED_KEYS.has(key) || /[\x00-\x1f]/.test(key)) fail(`invalid profile key: ${key}`);
-    return { key, value: string(item.value, 'value'), ...metadata(item) };
+    if (item.pinned !== undefined && typeof item.pinned !== 'boolean') fail('pinned must be a boolean');
+    return { key, value: string(item.value, 'value'), ...metadata(item), ...(item.pinned ? { pinned: true } : {}) };
   }), item => item.key, 'profile key');
 }
 function topics(value: unknown): WorkspaceTopic[] {
@@ -212,7 +215,7 @@ export async function exportMemoryBundle(options: MigrationOptions = {}, scope: 
       await directoryNames(dir);
       await withDocumentLock(path.join(dir, '.lock'), async () => {
         const stored = await readProject(dir);
-        if (stored.files.length === 0) return;
+        if (stored.files.length === 0 && stored.index === null) return;
         const sourcePath = /^<!-- ws: (.*?) -->$/m.exec((stored.index ?? '').replace(/\r\n/g, '\n'))?.[1] ?? '';
         projects.push({ id, sourcePath, topics: stored.files.map(file => file.topic) });
       });
@@ -264,10 +267,10 @@ async function mappedProjects(bundle: MemoryBundle, options: ImportOptions) {
     ids.add(mapping.id);
     const project = bundle.projects.find(p => p.id === mapping.id);
     if (!project) fail(`unknown exported project: ${mapping.id}`);
-    const targetPath = await fs.realpath(path.resolve(mapping.path));
+    const targetPath = projectDirectory(mapping.path, options.workspaceMode);
     if (/[\r\n\x00]/.test(targetPath)) fail('target project path must be a single line');
     if (!(await fs.stat(targetPath)).isDirectory()) fail(`target project is not a directory: ${targetPath}`);
-    const dir = path.join(loc.base, workspaceHashOf(targetPath));
+    const dir = workspaceLocation(targetPath, loc.base);
     if (destinations.has(pathKey(dir))) fail('multiple imported projects cannot target the same directory');
     destinations.add(pathKey(dir));
     if (within(dir, loc.profile)) fail('profile path overlaps a target workspace memory directory');
@@ -334,6 +337,9 @@ async function loadBundle(source: string): Promise<MemoryBundle> {
 export async function previewMemoryImport(source: string, options: ImportOptions = {}): Promise<ImportPreview> {
   return (await prepare(await loadBundle(source), options)).preview;
 }
+export async function previewMemoryBundle(doc: string, options: ImportOptions = {}): Promise<ImportPreview> {
+  return (await prepare(parseMemoryBundle(doc), options)).preview;
+}
 
 async function atomicWrite(file: string, doc: string): Promise<void> {
   await beforeWrite?.(file);
@@ -362,12 +368,18 @@ async function revert(files: FileChange[]): Promise<void> {
 }
 
 export async function applyMemoryImport(source: string, token: string, options: ImportOptions = {}) {
+  return applyBundle(() => loadBundle(source), token, options);
+}
+export async function applyMemoryBundle(doc: string, token: string, options: ImportOptions = {}) {
+  return applyBundle(async () => parseMemoryBundle(doc), token, options);
+}
+async function applyBundle(load: () => Promise<MemoryBundle>, token: string, options: ImportOptions) {
   if (!/^[a-f0-9]{64}$/.test(token)) fail('preview first and provide its previewToken before applying');
-  const bundle = await loadBundle(source);
+  const bundle = await load();
   const initial = await prepare(bundle, options);
   if (initial.preview.previewToken !== token) fail('import preview changed; preview again before applying');
   return underLocks(initial.locks, async () => {
-    const plan = await prepare(await loadBundle(source), options);
+    const plan = await prepare(await load(), options);
     if (plan.locks.join('\n') !== initial.locks.join('\n') || plan.preview.previewToken !== token) fail('memory changed since preview; preview again before applying');
     if (plan.files.length === 0) return { ...plan.preview, applied: true, backupPath: null };
     const backupPath = path.join(path.dirname(locations(options).profile), 'migration-backups', `${Date.now()}-${randomUUID()}.json`);
@@ -380,6 +392,9 @@ export async function applyMemoryImport(source: string, token: string, options: 
     // Complete durable backup before touching any live memory file.
     await writeJournal();
     try {
+      for (const file of plan.files) {
+        if (path.basename(file.path) !== 'MEMORY.md') await recordHistory(file.path, file.before, file.after, 'import');
+      }
       for (const file of plan.files) await atomicWrite(file.path, file.after);
       journal.status = 'completed';
       await writeJournal();

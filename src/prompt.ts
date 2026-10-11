@@ -18,9 +18,9 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis';
-import { renderEntries, renderEntriesBudgeted, truncateText } from './profile.ts';
+import { renderEntries, renderEntriesBudgeted, truncateText, orderByPriority } from './profile.ts';
 import type { MemoryStore } from './store.ts';
-import { readWorkspaceIndexSync } from './workspace.ts';
+import { readWorkspaceIndexSync, type WorkspaceMode } from './workspace.ts';
 
 /** Line-budget a text: keep whole lines from the top; the first line always survives. */
 function budgetText(text: string, maxBytes: number): string {
@@ -47,10 +47,21 @@ export function registerProfilePrompt(
   staleAfterDays = 0,
   workspacePromptMaxBytes = 512,
   workspaceBase = '',
+  workspaceMode: WorkspaceMode = 'directory',
+  projectPath = '',
 ): void {
   if (!includeInPrompt) return;
 
   ctx.systemPrompt.variable('user_profile', (context) => {
+    const agent = (context as { agent?: { session?: { header?: { cwd?: string } } } }).agent;
+    return memoryPromptPreview(store, agent?.session?.header?.cwd, promptMaxBytes, staleAfterDays, workspacePromptMaxBytes, workspaceBase, workspaceMode, projectPath);
+  });
+  ctx.systemPrompt.section({ name: 'user:memory', order: 50, text: '{{user_profile}}' });
+}
+
+/** Same renderer used by prompt assembly and the management page's current preview. */
+export function memoryPromptPreview(store: MemoryStore, cwd: string | undefined, promptMaxBytes = 2048,
+  staleAfterDays = 0, workspacePromptMaxBytes = 512, workspaceBase = '', workspaceMode: WorkspaceMode = 'directory', projectPath = ''): string {
     const now = new Date().toISOString();
     // Invalidated entries stay in the file but never enter the prompt.
     const entries = store.listSync().filter((entry) => !entry.invalidatedAt);
@@ -60,13 +71,12 @@ export function registerProfilePrompt(
         ? { text: '', omitted: 0 }
         : promptMaxBytes > 0
           ? renderEntriesBudgeted(entries, promptMaxBytes, options)
-          : { text: renderEntries(entries, options), omitted: 0 };
+          : { text: renderEntries(orderByPriority(entries), options), omitted: 0 };
     // Workspace layer: the index only — topic bodies stay lazy (memory_topic).
-    const agent = (context as { agent?: { session?: { header?: { cwd?: string } } } }).agent;
-    const cwd = agent?.session?.header?.cwd;
     let wsText = '';
-    if (workspacePromptMaxBytes > 0 && typeof cwd === 'string' && cwd !== '') {
-      const index = readWorkspaceIndexSync(cwd, workspaceBase);
+    const projectCwd = projectPath || cwd;
+    if (workspacePromptMaxBytes > 0 && typeof projectCwd === 'string' && projectCwd !== '') {
+      const index = readWorkspaceIndexSync(projectCwd, workspaceBase, workspaceMode, projectPath);
       if (index !== null) wsText = budgetText(index.text, workspacePromptMaxBytes);
     }
     if (global.text === '' && wsText === '') return '';
@@ -106,11 +116,4 @@ export function registerProfilePrompt(
       );
     }
     return parts.join('\n');
-  });
-
-  ctx.systemPrompt.section({
-    name: 'user:memory',
-    order: 50,
-    text: '{{user_profile}}',
-  });
 }

@@ -26,6 +26,7 @@ import {
   searchTopics,
   type TopicMode,
   type WorkspaceMemory,
+  type WorkspaceMode,
 } from './workspace.ts';
 
 export interface MemoryToolsOptions {
@@ -34,6 +35,8 @@ export interface MemoryToolsOptions {
   staleAfterDays?: number;
   /** Base directory override for workspace memory (mainly for testing). */
   workspaceBase?: string;
+  workspaceMode?: WorkspaceMode;
+  projectPath?: string;
   /** Background-consolidation entry point, supplied by the composition root. */
   consolidate?: ConsolidateRunner;
 }
@@ -60,11 +63,11 @@ const NO_WORKSPACE_ERROR =
   'no workspace detected for this session (the session has no cwd, or it is inaccessible); use scope=global for personal memory';
 
 /** Resolve the executing session's workspace memory, or null when none. */
-async function workspaceFor(exec: { agent?: { session?: { header?: { cwd?: string } } } }, baseDir: string): Promise<WorkspaceMemory | null> {
-  const cwd = exec.agent?.session?.header?.cwd;
+async function workspaceFor(exec: { agent?: { session?: { header?: { cwd?: string } } } }, baseDir: string, options: MemoryToolsOptions): Promise<WorkspaceMemory | null> {
+  const cwd = options.projectPath || exec.agent?.session?.header?.cwd;
   if (typeof cwd !== 'string' || cwd.trim() === '') return null;
   try {
-    return await createWorkspaceMemory({ cwd, baseDir });
+    return await createWorkspaceMemory({ cwd, baseDir, mode: options.workspaceMode, projectPath: options.projectPath });
   } catch {
     // A cwd that vanished (ENOENT) means no usable workspace.
     return null;
@@ -91,7 +94,7 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
   const workspaceBase = options.workspaceBase ?? '';
   const consolidate = options.consolidate;
   const profilePath = store.path();
-  registerMigrationTools(ctx, { profilePath, workspaceBase, maxBytes: options.maxBytes });
+  registerMigrationTools(ctx, { profilePath, workspaceBase, maxBytes: options.maxBytes, workspaceMode: options.workspaceMode });
 
   ctx.tools.register(
     defineTool({
@@ -129,7 +132,7 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
           entry.value.toLowerCase().includes(query);
         const valid = entries.filter((entry) => !entry.invalidatedAt && matches(entry));
         const invalidated = entries.filter((entry) => entry.invalidatedAt && matches(entry));
-        const combined = args.includeStale ? [...valid, ...invalidated] : valid;
+        const combined = (args.includeStale ? [...valid, ...invalidated] : valid).sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned));
         const limit = Math.max(0, Math.min(args.limit ?? 50, 100));
         const slice = combined.slice(0, limit);
         const opts: RenderOptions = { now: new Date().toISOString(), staleAfterDays };
@@ -206,7 +209,7 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
               ? `memory invalidated (${fieldOf(value, 'key')})${scope} — kept in file for audit, hidden from the prompt`
               : `memory updated (${fieldOf(value, 'key')})${scope}` +
                 (evicted.length > 0
-                  ? `; evicted older entries to stay within limit: ${evicted.join(', ')}`
+                  ? `; archived older entries to stay within limit: ${evicted.join(', ')}`
                   : '');
           return [{ type: 'text', text }];
         },
@@ -223,7 +226,7 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
       ): Promise<Record<string, JsonValue>> {
         const mode = args.mode ?? 'set';
         if (args.scope === 'workspace') {
-          const ws = await workspaceFor(exec, workspaceBase);
+          const ws = await workspaceFor(exec, workspaceBase, options);
           if (ws === null) {
             return { ok: false, scope: 'workspace', key: args.key, mode, bytes: 0, error: NO_WORKSPACE_ERROR };
           }
@@ -242,6 +245,7 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
               bytes: result.bytes,
               evicted: result.evicted,
               truncated: result.truncated,
+              archivePath: result.archivePath ?? null,
             }
           : {
               ok: false,
@@ -292,7 +296,7 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
           invalidatedAt: entry.invalidatedAt,
           invalidReason: entry.invalidReason,
         }));
-        const ws = await workspaceFor(exec, workspaceBase);
+        const ws = await workspaceFor(exec, workspaceBase, options);
         const wsTopics = ws === null ? [] : await ws.list();
         const gHits = searchTopics(globalTopics, query, includeStale).map((h) => ({ ...h, scope: 'global' }));
         const wHits = searchTopics(wsTopics, query, includeStale).map((h) => ({ ...h, scope: 'workspace' }));
@@ -345,7 +349,7 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
         args: { topic: string },
         exec: { agent?: { session?: { header?: { cwd?: string } } } },
       ): Promise<Record<string, JsonValue>> {
-        const ws = await workspaceFor(exec, workspaceBase);
+        const ws = await workspaceFor(exec, workspaceBase, options);
         if (ws === null) return { ok: false, topic: args.topic, error: NO_WORKSPACE_ERROR };
         const topic = await ws.read(args.topic);
         if (topic === undefined) {
@@ -398,7 +402,7 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
         if (consolidate === undefined) {
           return { ok: false, error: 'consolidation is not wired in this instance' };
         }
-        const ws = await workspaceFor(exec, workspaceBase);
+        const ws = await workspaceFor(exec, workspaceBase, options);
         const useModel = args.useModel === true;
         const outcome = await consolidate({
           source: 'manual',

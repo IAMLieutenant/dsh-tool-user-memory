@@ -5,7 +5,7 @@
  * are fetched on demand via `memory_search` / `memory_topic`).
  *
  * Layout for one workspace (hash = first 16 hex of sha256 over the
- * lowercased `realpath` of the session's cwd):
+ * canonical project path, folded to lowercase only on Windows):
  *
  *   MEMORY.md            # human-readable index, regenerated on every write
  *   <topic>.md           # one topic per file (filename = topic name + .md)
@@ -23,10 +23,11 @@
  */
 
 import { createHash } from 'node:crypto';
-import { promises as fsp, readFileSync, realpathSync, readdirSync } from 'node:fs';
+import { promises as fsp, readFileSync, realpathSync, readdirSync, existsSync } from 'node:fs';
 import * as nodePath from 'node:path';
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths';
 import { withDocumentLock } from './lock.ts';
+import { recordHistory, readMemoryDocument, documentHash } from './history.ts';
 
 /**
  * Canonicalize a directory path: `..`/trailing slashes/symlinks resolved, and
@@ -278,6 +279,38 @@ export interface WorkspaceMemoryOptions {
   cwd: string;
   /** Base directory; defaults to $DSH_HOME/user-memory/workspace (test override). */
   baseDir?: string;
+  mode?: WorkspaceMode;
+  projectPath?: string;
+}
+
+export type WorkspaceMode = 'directory' | 'git-root';
+
+/** Worktree .git files and ordinary .git directories both mark a repository root. */
+export function projectDirectory(cwd: string, mode: WorkspaceMode = 'directory', override = ''): string {
+  let current = realpathSync(nodePath.resolve(override.trim() || cwd));
+  if (override.trim() || mode === 'directory') return current;
+  if (mode !== 'git-root') throw new Error('invalid workspace mode');
+  const original = current;
+  while (true) {
+    if (existsSync(nodePath.join(current, '.git'))) return current;
+    const parent = nodePath.dirname(current);
+    if (parent === current) return original;
+    current = parent;
+  }
+}
+
+/** Reuse an old Linux store only when its recorded source matches exactly. */
+export function workspaceLocation(canonical: string, baseDir = ''): string {
+  const base = baseDir || dshHomePath('user-memory', 'workspace');
+  const target = nodePath.join(base, workspaceHashOf(canonical));
+  if (process.platform === 'win32' || existsSync(target)) return target;
+  const legacy = nodePath.join(base, workspaceHashOf(canonical.toLowerCase()));
+  if (legacy === target) return target;
+  try {
+    const doc = readFileSync(nodePath.join(legacy, 'MEMORY.md'), 'utf8');
+    if (/^<!-- ws: (.*?) -->$/m.exec(doc)?.[1] === canonical) return legacy;
+  } catch { /* no unambiguous legacy store */ }
+  return target;
 }
 
 export interface WorkspaceMemory {
@@ -290,7 +323,7 @@ export interface WorkspaceMemory {
   /** One topic by name (undefined when missing); name matching is exact after normalize. */
   read(topic: string): Promise<WorkspaceTopic | undefined>;
   /** Apply one mutation and regenerate the index; never throws for policy errors. */
-  write(topic: string, body: string, mode: TopicMode, invalidateReason?: string, expected?: WorkspaceTopic | null, dependency?: WorkspaceTopic): Promise<TopicWriteResult>;
+  write(topic: string, body: string, mode: TopicMode, invalidateReason?: string, expected?: WorkspaceTopic | null, dependency?: WorkspaceTopic, expectedDocumentHash?: string): Promise<TopicWriteResult>;
   /** Keyword-scored hits over valid topics (see `searchTopics`). */
   search(query: string): Promise<WorkspaceHit[]>;
   /** Regenerable index text (valid topics only). */
@@ -298,15 +331,15 @@ export interface WorkspaceMemory {
 }
 
 /** sha256 (hex, first 16 chars) over the lowercased realpath of `cwd`. */
-export function workspaceHashOf(canonical: string): string {
-  return createHash('sha256').update(canonical.toLowerCase(), 'utf8').digest('hex').slice(0, 16);
+export function workspaceHashOf(canonical: string, platform = process.platform): string {
+  return createHash('sha256').update(platform === 'win32' ? canonical.toLowerCase() : canonical, 'utf8').digest('hex').slice(0, 16);
 }
 
 /** Resolve a session cwd to its workspace identity (directory + canonical path). */
 export async function workspaceIdentity(cwd: string): Promise<{ dir: string; path: string }> {
   const canonical = await canonicalDir(cwd);
   return {
-    dir: nodePath.join(dshHomePath('user-memory', 'workspace'), workspaceHashOf(canonical)),
+    dir: workspaceLocation(canonical),
     path: canonical,
   };
 }
@@ -339,16 +372,16 @@ export function readWorkspaceSync(dir: string): WorkspaceTopic[] {
 export function readWorkspaceIndexSync(
   cwd: string,
   baseDir: string,
+  mode: WorkspaceMode = 'directory',
+  projectPath = '',
 ): { text: string; path: string } | null {
   let canonical: string;
   try {
-    canonical = realpathSync(nodePath.resolve(cwd));
+    canonical = projectDirectory(cwd, mode, projectPath);
   } catch {
     return null;
   }
-  const hash = workspaceHashOf(canonical);
-  const dir =
-    baseDir !== '' ? nodePath.join(baseDir, hash) : nodePath.join(dshHomePath('user-memory', 'workspace'), hash);
+  const dir = workspaceLocation(canonical, baseDir);
   const topics = readWorkspaceSync(dir);
   if (!topics.some((t) => t.invalidatedAt === '')) return null;
   return { text: buildIndexText(topics, canonical), path: canonical };
@@ -396,12 +429,13 @@ async function listAsync(dir: string): Promise<WorkspaceTopic[]> {
 }
 
 export async function createWorkspaceMemory(options: WorkspaceMemoryOptions): Promise<WorkspaceMemory> {
-  const canonical = await canonicalDir(options.cwd);
-  const hash = workspaceHashOf(canonical);
-  const dir =
-    options.baseDir !== undefined && options.baseDir !== ''
-      ? nodePath.join(options.baseDir, hash)
-      : nodePath.join(dshHomePath('user-memory', 'workspace'), hash);
+  const canonical = projectDirectory(options.cwd, options.mode, options.projectPath);
+  const dir = workspaceLocation(canonical, options.baseDir);
+  return createStoredWorkspaceMemory(dir, canonical);
+}
+
+/** Used by the manager for stored projects whose original directory no longer exists. */
+export function createStoredWorkspaceMemory(dir: string, canonical: string): WorkspaceMemory {
   const path = canonical;
 
   async function rebuildIndex(topics: WorkspaceTopic[]): Promise<void> {
@@ -425,7 +459,7 @@ export async function createWorkspaceMemory(options: WorkspaceMemoryOptions): Pr
     read: (topic) => findTopic(topic),
     indexText: async () => buildIndexText(await listAsync(dir), path),
     search: async (query) => searchTopics(await listAsync(dir), query),
-    async write(topic, body, mode, invalidateReason = '', expected, dependency): Promise<TopicWriteResult> {
+    async write(topic, body, mode, invalidateReason = '', expected, dependency, expectedDocumentHash): Promise<TopicWriteResult> {
       const norm = normalizeTopic(topic);
       if (!norm.ok) return { ok: false, topic, mode, error: norm.error };
       const normalized = norm.topic;
@@ -469,7 +503,9 @@ export async function createWorkspaceMemory(options: WorkspaceMemoryOptions): Pr
           // on case-sensitive filesystems.
           const storedName = existing?.topic ?? normalized;
           const file = nodePath.join(dir, `${storedName}.md`);
+          if (expectedDocumentHash && documentHash(await readMemoryDocument(file)) !== expectedDocumentHash) return { ok: false, topic, mode, error: 'memory changed; refresh before editing' };
           if (mode === 'remove') {
+            if (index >= 0) await recordHistory(file, await readMemoryDocument(file), null, 'remove');
             if (index >= 0) await fsp.unlink(file);
             await rebuildIndex(topics.filter((_, i) => i !== index));
             return { ok: true, topic: normalized, mode };
@@ -484,6 +520,7 @@ export async function createWorkspaceMemory(options: WorkspaceMemoryOptions): Pr
               invalidatedAt: now,
               invalidReason: invalidateReason.split(/\r?\n/)[0]!.trim().slice(0, 200),
             };
+            await recordHistory(file, await readMemoryDocument(file), serializeTopicFile(updated), 'invalidate');
             await atomicWrite(dir, file, serializeTopicFile(updated));
             await rebuildIndex(topics.map((t, i) => (i === index ? updated : t)));
             return { ok: true, topic: normalized, mode };
@@ -502,6 +539,7 @@ export async function createWorkspaceMemory(options: WorkspaceMemoryOptions): Pr
             invalidatedAt: '',
             invalidReason: '',
           };
+          await recordHistory(file, await readMemoryDocument(file), serializeTopicFile(updated), mode);
           await atomicWrite(dir, file, serializeTopicFile(updated));
           const next = topics.slice();
           if (index >= 0) next[index] = updated;

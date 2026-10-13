@@ -1,6 +1,6 @@
 # dsh-tool-user-memory
 
-[![npm version][badge-npm]][npm-url] [![GitHub release][badge-release]][release-url] [![MIT License][badge-license]](LICENSE)
+[![npm version][badge-npm]][npm-url] [![CI][badge-ci]][ci-url] [![GitHub release][badge-release]][release-url] [![MIT License][badge-license]](LICENSE)
 
 **Persistent preferences and project context for [DeepSeek Harness][harness], across sessions and computers.**
 
@@ -294,8 +294,10 @@ Candidate directions include provenance, user-confirmed memory suggestions, crea
 [MIT](LICENSE)
 
 [badge-npm]: https://img.shields.io/npm/v/dsh-tool-user-memory
+[badge-ci]: https://github.com/IAMLieutenant/dsh-tool-user-memory/actions/workflows/ci.yml/badge.svg
 [badge-release]: https://img.shields.io/github/v/release/IAMLieutenant/dsh-tool-user-memory
 [badge-license]: https://img.shields.io/badge/license-MIT-blue
+[ci-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/actions/workflows/ci.yml
 [npm-url]: https://www.npmjs.com/package/dsh-tool-user-memory
 [issues-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues
 [release-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.4.0

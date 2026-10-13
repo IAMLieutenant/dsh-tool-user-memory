@@ -1,6 +1,6 @@
 # dsh-tool-user-memory
 
-[![npm 版本][badge-npm]][npm-url] [![GitHub Release][badge-release]][release-url] [![MIT License][badge-license]](LICENSE)
+[![npm 版本][badge-npm]][npm-url] [![CI][badge-ci]][ci-url] [![GitHub Release][badge-release]][release-url] [![MIT License][badge-license]](LICENSE)
 
 **让 [DeepSeek Harness][harness] 记住你的偏好和项目背景，跨会话复用，换电脑也能迁移。**
 
@@ -292,8 +292,10 @@ dsh plugin --profile web add ./dsh-tool-user-memory-0.4.0.tgz
 [MIT](LICENSE)
 
 [badge-npm]: https://img.shields.io/npm/v/dsh-tool-user-memory
+[badge-ci]: https://github.com/IAMLieutenant/dsh-tool-user-memory/actions/workflows/ci.yml/badge.svg
 [badge-release]: https://img.shields.io/github/v/release/IAMLieutenant/dsh-tool-user-memory
 [badge-license]: https://img.shields.io/badge/license-MIT-blue
+[ci-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/actions/workflows/ci.yml
 [npm-url]: https://www.npmjs.com/package/dsh-tool-user-memory
 [issues-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/issues
 [release-url]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.4.0

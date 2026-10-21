@@ -312,9 +312,9 @@ test('client: plugin-row button opens one in-window dialog, closes and cleans up
   const plugin = entry!.factory(name => { assert.equal(name, 'react'); return {
     createElement(tag: string, props: Record<string, unknown>, ...children: Element[]) { return { tag, props, children }; } }; });
   plugin.apply({ effect(f: () => (() => void) | undefined) { const dispose = f(); if (dispose) disposers.push(dispose); },
-    slots: { inject(name: string, f: () => unknown) { assert.equal(name, 'plugins.row.config'); return f(); },
+    slots: { inject(name: string, f: () => unknown) { assert.equal(name, 'plugins.bundle.config'); return f(); },
       register(meta: { key: string }, component: () => Element) { registered = meta.key; card = component; return () => {}; } } });
-  assert.equal(registered, 'dsh-tool-user-memory#tool-user-memory');
+  assert.equal(registered, 'dsh-tool-user-memory');
   const button = card!().children[0]!;
   assert.equal(button.tag, 'button'); assert.equal(button.props!.target, undefined);
   const open = button.props!.onClick as () => void;

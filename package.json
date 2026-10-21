@@ -1,6 +1,6 @@
 {
   "name": "dsh-tool-user-memory",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "为 DSH 提供跨会话用户偏好与项目记忆。",
   "type": "module",
   "main": "lib/index.js",
@@ -21,7 +21,9 @@
     "cordis.patch.yml",
     "README.md",
     "README.en.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "ROADMAP.md",
+    "docs"
   ],
   "dsh": {
     "bundle": {
@@ -29,8 +31,10 @@
     },
     "client": {
       "platform": "web",
-      "inject": [],
-      "immediately": true
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-plugin-manager"
+      ]
     }
   },
   "license": "MIT",

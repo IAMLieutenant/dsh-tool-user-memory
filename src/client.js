@@ -1,4 +1,4 @@
-// DSH browser entry: open the manager inside the current DSH window.
+// DSH browser entry: open the manager from the bundle's own detail page.
 window.__ModuleLoader__.load({
   id: 'dsh-tool-user-memory',
   factory: function (require) {
@@ -92,11 +92,11 @@ window.__ModuleLoader__.load({
         }
         ctx.effect(function () { return closeManager; });
         ctx.effect(function () {
-          return ctx.slots.inject('plugins.row.config', function () {
-            return ctx.slots.register({ name: 'plugins.row.config', key: 'dsh-tool-user-memory#tool-user-memory' }, function () {
+          return ctx.slots.inject('plugins.bundle.config', function () {
+            return ctx.slots.register({ name: 'plugins.bundle.config', key: 'dsh-tool-user-memory' }, function () {
               return React.createElement('div', { style: { padding: '12px 0' } },
                 React.createElement('button', { type: 'button', onClick: openManager }, '管理记忆'),
-                React.createElement('p', null, '查看和编辑记忆，或迁移到另一台电脑。'));
+                React.createElement('p', null, '确认候选、查看和编辑记忆，或迁移到另一台电脑。'));
             });
           });
         });

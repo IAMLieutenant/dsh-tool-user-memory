@@ -21,6 +21,7 @@ import {
 } from './consolidate.ts';
 import type { MemoryStore } from './store.ts';
 import { registerMigrationTools } from './migration-tools.ts';
+import { createCandidateStore } from './candidates.ts';
 import {
   createWorkspaceMemory,
   searchTopics,
@@ -96,6 +97,47 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
   const profilePath = store.path();
   registerMigrationTools(ctx, { profilePath, workspaceBase, maxBytes: options.maxBytes, workspaceMode: options.workspaceMode });
 
+  const candidates = createCandidateStore(profilePath);
+  // Capture only live, direct human messages. Do not scan private session logs
+  // or accept a model-supplied session ID as proof of a source.
+  const recent = new WeakMap<object, { seq: number; text: string }[]>();
+  ctx.on('session/event', (session, event) => {
+    if (event.type !== 'user/message') return;
+    const data = event.data as unknown as { source?: { kind?: string }; content?: unknown };
+    if (data.source?.kind !== 'user') return;
+    const content = data.content;
+    const text = typeof content === 'string' ? content : Array.isArray(content)
+      ? content.filter(b => b && b.type === 'text' && typeof b.text === 'string').map(b => b.text).join('\n') : '';
+    if (!text) return;
+    recent.set(session, [...(recent.get(session) ?? []), { seq: event.seq, text: text.slice(0, 20000) }].slice(-10));
+  });
+  ctx.tools.register(defineTool({
+    name: 'memory_propose',
+    description: 'Propose a durable memory or correction for human review in 管理记忆 → 待确认. Use for inferred facts, corrections, or when the user wants to review before saving. It is NOT saved as active memory and is NOT injected until the human confirms in the manager. Choose workspace for project facts, global only for cross-project preferences. Do not propose temporary requests. Source excerpts are checked against recently observed direct user messages by the host; a text match does not prove that your interpretation is correct. This tool cannot accept candidates.',
+    parameters: {
+      key: { type: 'string', required: true, description: 'Stable memory name; use the existing name for a correction so the manager can show the previous value.' },
+      value: { type: 'string', required: true, description: 'Proposed durable content, at most 12000 characters.' },
+      scope: { type: 'string', required: true, enum: ['global', 'workspace'], description: 'Required explicit scope. workspace requires the executing session to have a working directory.' },
+      excerpt: { type: 'string', description: 'Optional reference excerpt (unverified, at most 2000 characters).' },
+      reason: { type: 'string', description: 'Why this is worth remembering, at most 500 characters.' },
+    },
+    output: { schema: { type: 'object', additionalProperties: true }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+    async execute(args: { key: string; value: string; scope: 'global' | 'workspace'; excerpt?: string; reason?: string }, exec: { agent?: { session?: { id?: string; header?: { id?: string; cwd?: string } } } }): Promise<Record<string, JsonValue>> {
+      try {
+        const ws = args.scope === 'workspace' ? await workspaceFor(exec, workspaceBase, options) : null;
+        if (args.scope === 'workspace' && !ws) return { ok: false, error: NO_WORKSPACE_ERROR };
+        const sid = exec.agent?.session?.id ?? exec.agent?.session?.header?.id;
+        const excerpt = args.excerpt ?? '';
+        const source = excerpt && exec.agent?.session ? recent.get(exec.agent.session)?.findLast(e => e.text.includes(excerpt)) : undefined;
+        const item = await candidates.propose({ key: args.key.trim(), value: args.value, scope: args.scope,
+          ...(ws ? { workspacePath: ws.path } : {}), ...(typeof sid === 'string' ? { sourceSessionId: sid } : {}),
+          ...(source ? { sourceEventSeq: source.seq } : {}), excerptVerified: !!source,
+          excerpt, reason: args.reason ?? '' });
+        return { ok: true, candidateId: item.id, status: 'pending', active: false, message: '候选已提交，尚未生效。请在管理记忆的“待确认”中核对范围和内容后保存。' };
+      } catch (error) { return { ok: false, error: (error as Error).message }; }
+    },
+  }));
+
   ctx.tools.register(
     defineTool({
       name: 'memory_get',
@@ -153,6 +195,8 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
       name: 'memory_update',
       description: [
         'Record a user preference into the persisted user memory.',
+        'For inferred facts, corrections, or review-before-save requests, use memory_propose instead.',
+        'Use this direct-write tool when the user explicitly asks to save a stable memory.',
         'Call this when the user expresses a STABLE, long-term preference, introduces',
         'themselves or their project, or states a goal ("I prefer short answers",',
         '"I work on RAG retrieval", "my goal is to contribute to the harness").',

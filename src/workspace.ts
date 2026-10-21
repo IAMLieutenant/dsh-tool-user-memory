@@ -42,7 +42,10 @@ async function canonicalDir(cwd: string): Promise<string> {
 
 export const TOPIC_MAX_BYTES = 16_384;
 
+import { PROVENANCE_PREFIX, originLine, readOrigin, parseProvenance, type MemoryProvenance } from './provenance.ts';
+
 export interface WorkspaceTopic {
+  provenance?: MemoryProvenance;
   /** Topic name (the filename without .md; display name, case as written). */
   topic: string;
   body: string;
@@ -117,6 +120,10 @@ export function parseTopicFile(doc: string): WorkspaceTopic {
     invalidReason: '',
   };
   for (const rawLine of doc.split(/\r?\n/)) {
+    if (rawLine.startsWith(PROVENANCE_PREFIX)) {
+      if (parsed.provenance) throw new Error('重复的记忆来源');
+      parsed.provenance = readOrigin(rawLine); continue;
+    }
     const title = /^#\s+(.+?)\s*$/.exec(rawLine);
     if (title && parsed.topic === '') {
       parsed.topic = title[1]!.trim();
@@ -152,6 +159,7 @@ export function parseTopicFile(doc: string): WorkspaceTopic {
 export function serializeTopicFile(t: WorkspaceTopic): string {
   const lines = [`# ${t.topic}`];
   if (t.updatedAt !== '') lines.push(`${TS_PREFIX}${t.updatedAt}${TS_SUFFIX}`);
+  if (t.provenance) lines.push(originLine(t.provenance));
   if (t.invalidatedAt !== '') {
     lines.push(
       `${INVALID_PREFIX}${t.invalidatedAt}${t.invalidReason !== '' ? ` | ${t.invalidReason}` : ''}${INVALID_SUFFIX}`,
@@ -323,7 +331,7 @@ export interface WorkspaceMemory {
   /** One topic by name (undefined when missing); name matching is exact after normalize. */
   read(topic: string): Promise<WorkspaceTopic | undefined>;
   /** Apply one mutation and regenerate the index; never throws for policy errors. */
-  write(topic: string, body: string, mode: TopicMode, invalidateReason?: string, expected?: WorkspaceTopic | null, dependency?: WorkspaceTopic, expectedDocumentHash?: string): Promise<TopicWriteResult>;
+  write(topic: string, body: string, mode: TopicMode, invalidateReason?: string, expected?: WorkspaceTopic | null, dependency?: WorkspaceTopic, expectedDocumentHash?: string, provenance?: MemoryProvenance): Promise<TopicWriteResult>;
   /** Keyword-scored hits over valid topics (see `searchTopics`). */
   search(query: string): Promise<WorkspaceHit[]>;
   /** Regenerable index text (valid topics only). */
@@ -459,7 +467,7 @@ export function createStoredWorkspaceMemory(dir: string, canonical: string): Wor
     read: (topic) => findTopic(topic),
     indexText: async () => buildIndexText(await listAsync(dir), path),
     search: async (query) => searchTopics(await listAsync(dir), query),
-    async write(topic, body, mode, invalidateReason = '', expected, dependency, expectedDocumentHash): Promise<TopicWriteResult> {
+    async write(topic, body, mode, invalidateReason = '', expected, dependency, expectedDocumentHash, provenance): Promise<TopicWriteResult> {
       const norm = normalizeTopic(topic);
       if (!norm.ok) return { ok: false, topic, mode, error: norm.error };
       const normalized = norm.topic;
@@ -487,7 +495,7 @@ export function createStoredWorkspaceMemory(dir: string, canonical: string): Wor
             (expected === null ? existing === null : existing !== null &&
               existing.topic === expected.topic && existing.body === expected.body &&
               existing.updatedAt === expected.updatedAt && existing.invalidatedAt === expected.invalidatedAt &&
-              existing.invalidReason === expected.invalidReason);
+              existing.invalidReason === expected.invalidReason && JSON.stringify(existing.provenance) === JSON.stringify(expected.provenance));
           if (!unchanged) {
             return { ok: false, topic: normalized, mode, error: `topic '${normalized}' changed since the consolidation plan; skipped` };
           }
@@ -533,6 +541,7 @@ export function createStoredWorkspaceMemory(dir: string, canonical: string): Wor
             return { ok: false, topic: normalized, mode, error: `combined topic body exceeds ${TOPIC_MAX_BYTES} bytes` };
           }
           const updated: WorkspaceTopic = {
+            ...(provenance ? { provenance: parseProvenance(provenance) } : existing?.provenance ? { provenance: existing.body === mergedBody ? existing.provenance : { createdAt: existing.provenance.createdAt, method: 'tool' as const } } : {}),
             topic: storedName,
             body: mergedBody,
             updatedAt: now,

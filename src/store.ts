@@ -12,6 +12,7 @@ import { promises as fsp, readFileSync } from 'node:fs';
 import * as nodePath from 'node:path';
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths';
 import { withDocumentLock } from './lock.ts';
+import { parseProvenance, type MemoryProvenance } from './provenance.ts';
 import { archiveEntries, recordHistory, documentHash, readMemoryDocument } from './history.ts';
 import {
   RESERVED_KEYS,
@@ -57,7 +58,7 @@ export interface MemoryStore {
   list(): Promise<ProfileEntry[]>;
   /** Sync variant used by the system-prompt variable provider. */
   listSync(): ProfileEntry[];
-  update(key: string, value: string, mode: MergeMode, invalidateReason?: string, guard?: MemoryMutationGuard, pinned?: boolean): Promise<UpdateResult>;
+  update(key: string, value: string, mode: MergeMode, invalidateReason?: string, guard?: MemoryMutationGuard, pinned?: boolean, provenance?: MemoryProvenance, strictCapacity?: boolean): Promise<UpdateResult>;
   /** Change retention priority without refreshing content time or reactivating it. */
   setPinned(key: string, pinned: boolean, guard?: MemoryMutationGuard): Promise<UpdateResult>;
   /**
@@ -81,7 +82,7 @@ function guardError(current: ProfileEntry[], key: string, guard?: MemoryMutation
   const same = (a: ProfileEntry | null, b: ProfileEntry | null): boolean =>
     a === null || b === null ? a === b :
       a.key === b.key && a.value === b.value && a.updatedAt === b.updatedAt &&
-      a.invalidatedAt === b.invalidatedAt && a.invalidReason === b.invalidReason && !!a.pinned === !!b.pinned;
+      a.invalidatedAt === b.invalidatedAt && a.invalidReason === b.invalidReason && !!a.pinned === !!b.pinned && JSON.stringify(a.provenance) === JSON.stringify(b.provenance);
   if (!same(actual, guard.expected)) {
     return `memory '${key}' changed since the consolidation plan; skipped`;
   }
@@ -155,6 +156,8 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
     invalidateReason = '',
     guard?: MemoryMutationGuard,
     pinned?: boolean,
+    provenance?: MemoryProvenance,
+    strictCapacity = false,
   ): Promise<UpdateResult> {
     const trimmedKey = key.trim();
     const keyError = validateKey(trimmedKey);
@@ -192,9 +195,11 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
           };
         }
         const merged = mergeEntry(current, trimmedKey, value, mode, now, invalidateReason);
+        if (provenance) for (const entry of merged) if (entry.key === trimmedKey) entry.provenance = parseProvenance(provenance);
         if (pinned !== undefined) for (const entry of merged) if (entry.key === trimmedKey) {
           if (pinned) entry.pinned = true; else delete entry.pinned;
         }
+        if (strictCapacity && Buffer.byteLength(serializeProfile(merged) + `\n## updated-at\n${now}\n`, 'utf8') > maxBytes) return failure(key, mode, '确认后的记忆超过容量，尚未保存。请缩短内容或提高画像容量');
         return await commit(merged, trimmedKey, mode, now);
       });
     } catch (error) {
@@ -251,7 +256,7 @@ export function createMemoryStore(options: MemoryStoreOptions): MemoryStore {
         }
         // A content edit preserves both age and invalidation; only explicit
         // set/append should revive a retired entry.
-        const merged = current.map((entry) => entry.key === trimmedKey ? { ...entry, value } : entry);
+        const merged = current.map((entry) => entry.key === trimmedKey ? { ...entry, value, ...(entry.provenance && value !== entry.value ? { provenance: { createdAt: entry.provenance.createdAt, method: 'tool' as const } } : {}) } : entry);
         return await commit(merged, trimmedKey, 'set', now);
       });
     } catch (error) {

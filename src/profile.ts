@@ -22,7 +22,10 @@
  * not updated within a configured number of days (annotation only).
  */
 
+import { PROVENANCE_PREFIX, originLine, readOrigin, type MemoryProvenance } from './provenance.ts';
+
 export interface ProfileEntry {
+  provenance?: MemoryProvenance;
   key: string;
   value: string;
   /** ISO 8601 timestamp of the last update; '' for hand-edited entries (treated as oldest). */
@@ -85,7 +88,10 @@ export function parseProfile(doc: string): ProfileEntry[] {
       if (current) entries.push(current);
       current = { key: heading[1]!.trim(), value: '', updatedAt: '', invalidatedAt: '', invalidReason: '' };
     } else if (current) {
-      if (rawLine.startsWith('\\')) {
+      if (rawLine.startsWith(PROVENANCE_PREFIX)) {
+        if (current.provenance) throw new Error('重复的记忆来源');
+        current.provenance = readOrigin(rawLine);
+      } else if (rawLine.startsWith('\\')) {
         current.value += (current.value === '' ? '' : '\n') + unescapeLine(rawLine);
       } else if (
         rawLine.startsWith(TS_PREFIX) &&
@@ -117,10 +123,11 @@ export function serializeProfile(entries: ProfileEntry[]): string {
   const lines = ['# User Memory'];
   const pins = entries.filter(e => e.pinned && e.key && !RESERVED_KEYS.has(e.key)).map(e => e.key);
   if (pins.length) lines.push(`${PIN_PREFIX}${encodeURIComponent(JSON.stringify(pins))}${TS_SUFFIX}`);
-  for (const { key, value, updatedAt, invalidatedAt, invalidReason } of entries) {
+  for (const { key, value, updatedAt, invalidatedAt, invalidReason, provenance } of entries) {
     if (key === '' || RESERVED_KEYS.has(key)) continue;
     lines.push('', `## ${key}`);
     if (updatedAt !== '') lines.push(`${TS_PREFIX}${updatedAt}${TS_SUFFIX}`);
+    if (provenance) lines.push(originLine(provenance));
     if (invalidatedAt) {
       lines.push(
         `${INVALID_PREFIX}${invalidatedAt}${invalidReason ? ` | ${invalidReason}` : ''}${INVALID_SUFFIX}`,
@@ -172,6 +179,7 @@ export function mergeEntry(
   // set/append revalidate the key: any previous invalidation is cleared.
   const updated: ProfileEntry = {
     ...(existing?.pinned ? { pinned: true } : {}),
+    ...(existing?.provenance ? { provenance: existing.value === mergedValue ? existing.provenance : { createdAt: existing.provenance.createdAt, method: 'tool' as const } } : {}),
     key: trimmedKey,
     value: mergedValue,
     updatedAt: now,

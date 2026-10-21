@@ -26,3 +26,6 @@ x.md
 
 # git bundle transfer artifacts
 *.bundle
+
+# isolated compatibility and browser validation data
+.validation/

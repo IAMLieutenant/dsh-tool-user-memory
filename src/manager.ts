@@ -8,6 +8,9 @@ import { exportMemoryBundle, parseMemoryBundle, previewMemoryBundle, applyMemory
 import { atomicMemoryWrite, documentHash, readMemoryDocument, listHistory, restoreHistory, listArchives } from './history.ts';
 import { memoryPromptPreview } from './prompt.ts';
 import { withDocumentLock } from './lock.ts';
+import { createCandidateStore, type MemoryCandidate } from './candidates.ts';
+import type { MemoryProvenance } from './provenance.ts';
+import { workspaceHashOf } from './workspace.ts';
 
 export interface ManagerOptions extends MigrationOptions {
   projectPath?: string;
@@ -25,6 +28,7 @@ export function createMemoryManager(options: ManagerOptions = {}) {
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   if (!Number.isInteger(maxBytes) || maxBytes <= 0 || maxBytes > 16 * 1024 * 1024) throw new Error('画像容量必须是 1 到 16 MiB 之间的整数');
   const store = createMemoryStore({ path: profile, maxBytes });
+  const candidates = createCandidateStore(profile);
   const migration = { profilePath: profile, workspaceBase: base, maxBytes, workspaceMode: options.workspaceMode };
   async function project(id: string) {
     if (!/^[a-f0-9]{16}$/.test(id)) throw new Error('项目 ID 无效');
@@ -45,11 +49,12 @@ export function createMemoryManager(options: ManagerOptions = {}) {
   }
   async function snapshot(projectId = '') {
     const bundle = await exportMemoryBundle(migration);
+    const pending = (await candidates.list()).filter(c => c.status === 'pending');
     const ws = projectId ? await project(projectId) : null;
     const { entries, revision } = await withDocumentLock(ws ? path.join(ws.dir, '.lock') : `${profile}.lock`, async () => {
       const doc = await readMemoryDocument(profile);
       const revision = documentHash(doc);
-      const entries = ws ? (await ws.list()).map(t => ({ key: t.topic, value: t.body, updatedAt: t.updatedAt, invalidatedAt: t.invalidatedAt, invalidReason: t.invalidReason, revision: '' }))
+      const entries = ws ? (await ws.list()).map(t => ({ key: t.topic, value: t.body, updatedAt: t.updatedAt, invalidatedAt: t.invalidatedAt, invalidReason: t.invalidReason, provenance: t.provenance, revision: '' }))
         : parseProfile(doc ?? '').filter(e => !RESERVED_KEYS.has(e.key)).map(e => ({ ...e, revision }));
       if (ws) for (const e of entries) e.revision = documentHash(await readMemoryDocument(path.join(ws.dir, `${e.key}.md`)));
       return { entries, revision };
@@ -58,6 +63,7 @@ export function createMemoryManager(options: ManagerOptions = {}) {
     const active = (await store.list()).filter(e => !e.invalidatedAt);
     const budgeted = renderEntriesBudgeted(active, options.promptMaxBytes ?? 2048);
     return { entries, revision,
+      candidates: pending.map(c => ({ ...c, revision: documentHash(JSON.stringify(c)), projectId: c.workspacePath ? workspaceHashOf(c.workspacePath) : '' })),
       projects: bundle.projects.map(p => ({ id: p.id, sourcePath: p.sourcePath, topics: p.topics.length })),
       stats: { profileEntries: bundle.profile.length, projectTopics: bundle.projects.reduce((n, p) => n + p.topics.length, 0),
         activeBytes: Buffer.byteLength(await store.read()), maxBytes, archivedEntries: archives.reduce((n, a) => n + a.entries.length, 0),
@@ -66,9 +72,57 @@ export function createMemoryManager(options: ManagerOptions = {}) {
       promptPreview: options.includeInPrompt === false ? '' : memoryPromptPreview(store, ws?.path || options.projectPath, options.promptMaxBytes ?? 2048,
         options.staleAfterDays ?? 0, options.workspacePromptMaxBytes ?? 512, base, options.workspaceMode, options.projectPath) };
   }
+  async function candidateTarget(c: MemoryCandidate, input: Record<string, unknown>) {
+    const key = text(input.key, '名称').trim(), value = text(input.value, '内容');
+    if (validateKey(key) || RESERVED_KEYS.has(key) || !value.trim() || value.length > 12000) throw new Error('请填写有效的名称和内容');
+    if (input.scope === 'global') return { file: profile, key, value, ws: null };
+    if (input.scope !== 'workspace' || !c.workspacePath || input.projectId !== workspaceHashOf(c.workspacePath)) throw new Error('请选择用户记忆或候选的来源项目');
+    const ws = await createWorkspaceMemory({ cwd: c.workspacePath, baseDir: base, mode: options.workspaceMode, projectPath: c.workspacePath });
+    if (!normalizeTopic(key).ok) throw new Error('项目记忆名称无效');
+    const old = await ws.read(key);
+    return { file: path.join(ws.dir, `${old?.topic ?? key}.md`), key: old?.topic ?? key, value, ws };
+  }
+  async function candidatePlan(c: MemoryCandidate, input: Record<string, unknown>) {
+    const t = await candidateTarget(c, input), doc = await readMemoryDocument(t.file);
+    const existing = t.ws ? await t.ws.read(t.key) ?? null : (await store.list()).find(e => e.key === t.key) ?? null;
+    const before = existing ? ('body' in existing ? existing.body : existing.value) : '';
+    const pinned = typeof input.pinned === 'boolean' ? input.pinned : !!(existing && 'pinned' in existing && existing.pinned);
+    const token = documentHash(JSON.stringify({ candidate: c, file: t.file, key: t.key, value: t.value, pinned, revision: documentHash(doc) }));
+    return { t, existing, before, pinned, revision: documentHash(doc), token };
+  }
   async function action(raw: unknown): Promise<unknown> {
     const input = object(raw); const action = text(input.action, '操作');
     if (action === 'snapshot') return snapshot(typeof input.projectId === 'string' ? input.projectId : '');
+    if (action === 'preview-candidate') {
+      const c = (await candidates.list()).find(c => c.id === input.id && c.status === 'pending');
+      if (!c || documentHash(JSON.stringify(c)) !== input.revision) throw new Error('候选已变化或已处理，请刷新');
+      const p = await candidatePlan(c, input);
+      return { previewToken: p.token, before: p.before, replacing: !!p.existing, after: p.t.value,
+        scope: p.t.ws ? 'workspace' : 'global', key: p.t.key, sourcePath: p.t.ws?.path ?? '', pinned: p.pinned };
+    }
+    if (action === 'accept-candidate' || action === 'dismiss-candidate') {
+      return candidates.review(text(input.id, '候选'), text(input.revision, '候选版本'), action === 'accept-candidate' ? 'accepted' : 'dismissed', async c => {
+        if (action === 'dismiss-candidate') {
+          const globalSaved = (await store.list()).some(e => e.provenance?.candidateId === c.id);
+          const projectSaved = c.workspacePath ? (await (await createWorkspaceMemory({ cwd: c.workspacePath, baseDir: base, projectPath: c.workspacePath })).list()).some(e => e.provenance?.candidateId === c.id) : false;
+          if (globalSaved || projectSaved) throw new Error('这条候选已写入记忆，请到“记忆”中核对；不能用忽略撤销已保存的内容');
+          return { dismissed: true };
+        }
+        const p = await candidatePlan(c, input);
+        if (p.existing?.provenance?.candidateId === c.id && p.before === p.t.value) return { saved: true, recovered: true };
+        if (p.token !== input.previewToken) throw new Error('候选、范围或记忆已变化，请重新预览后确认');
+        const now = new Date().toISOString();
+        const provenance: MemoryProvenance = { createdAt: p.existing?.provenance?.createdAt || now,
+          confirmedAt: now, method: 'candidate', candidateId: c.id,
+          ...(c.sourceSessionId ? { sourceSessionId: c.sourceSessionId } : {}), ...(c.excerpt ? { excerpt: c.excerpt } : {}),
+          ...(c.excerptVerified !== undefined ? { excerptVerified: c.excerptVerified } : {}), ...(c.sourceEventSeq !== undefined ? { sourceEventSeq: c.sourceEventSeq } : {}),
+          ...(p.before && p.before.length <= 16384 ? { previousValue: p.before } : {}) };
+        const result = p.t.ws
+          ? await p.t.ws.write(p.t.key, p.t.value, 'set', '', await p.t.ws.read(p.t.key) ?? null, undefined, p.revision, provenance)
+          : await store.update(p.t.key, p.t.value, 'set', '', { expected: (await store.list()).find(e => e.key === p.t.key) ?? null, expectedDocumentHash: p.revision }, p.pinned, provenance, true);
+        if (!result.ok) throw new Error(result.error); return { saved: true, replaced: !!p.existing };
+      });
+    }
     if (action === 'export') return exportMemoryBundle(migration);
     if (action === 'inspect-import') { const b = parseMemoryBundle(text(input.doc, '导出文件')); return { profileEntries: b.profile.length, projects: b.projects.map(p => ({ id: p.id, sourcePath: p.sourcePath, topics: p.topics.length })) }; }
     if (action === 'preview-import' || action === 'apply-import') {
@@ -121,14 +175,16 @@ export function createMemoryManager(options: ManagerOptions = {}) {
       const current = await t.ws.read(key) ?? null;
       if (input.createOnly === true && current) throw new Error('同名主题已经存在，请使用编辑');
       if (documentHash(await readMemoryDocument(t.file)) !== revision) throw new Error('记忆已变化，请刷新');
-      const result = await t.ws.write(key, value, mode as 'set', reason, current, undefined, revision);
+      const provenance: MemoryProvenance = { createdAt: current?.provenance?.createdAt || new Date().toISOString(), method: 'manual', confirmedAt: new Date().toISOString(), ...(current?.body && current.body !== value && current.body.length <= 16384 ? { previousValue: current.body } : {}) };
+      const result = await t.ws.write(key, value, mode as 'set', reason, current, undefined, revision, provenance);
       if (!result.ok) throw new Error(result.error); return result;
     }
     const current = (await store.list()).find(e => e.key === key) ?? null;
     if (input.createOnly === true && current) throw new Error('同名条目已经存在，请使用编辑');
     if (documentHash(await readMemoryDocument(profile)) !== revision) throw new Error('记忆已变化，请刷新');
     if (input.pinned !== undefined && typeof input.pinned !== 'boolean') throw new Error('置顶状态必须是布尔值');
-    const result = await store.update(key, value, mode as 'set', reason, { expected: current, expectedDocumentHash: revision }, input.pinned as boolean | undefined);
+    const provenance: MemoryProvenance = { createdAt: current?.provenance?.createdAt || new Date().toISOString(), method: 'manual', confirmedAt: new Date().toISOString(), ...(current?.value && current.value !== value && current.value.length <= 16384 ? { previousValue: current.value } : {}) };
+    const result = await store.update(key, value, mode as 'set', reason, { expected: current, expectedDocumentHash: revision }, input.pinned as boolean | undefined, mode === 'set' || mode === 'append' ? provenance : undefined);
     if (!result.ok) throw new Error(result.error); return result;
   }
   async function diagnose(cwd?: string) {

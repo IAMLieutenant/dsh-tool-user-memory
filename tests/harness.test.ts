@@ -17,6 +17,7 @@ import { renderPrompt } from '@deepseek-ai/dsh-system-prompt';
 import type { CallId } from '@deepseek-ai/dsh-llm';
 import * as ToolUserMemory from '../src/index.ts';
 import { ConsolidationStubAdapter } from './stub-adapter.ts';
+import { createMemoryManager } from '../src/manager.ts';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -109,12 +110,34 @@ test('harness: plugin mounts and registers memory_get / memory_update', async ()
     await mountProfile(ctx, file);
     assert.ok(ctx.tools.get('memory_get'), 'memory_get registered');
     assert.ok(ctx.tools.get('memory_update'), 'memory_update registered');
+    assert.ok(ctx.tools.get('memory_propose'), 'memory_propose registered');
     assert.ok(ctx.tools.get('memory_export'), 'memory_export registered');
     assert.ok(ctx.tools.get('memory_import'), 'memory_import registered');
   } finally {
     await disposeCtx(ctx);
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('harness: proposal captures host session identity and verifies only direct human excerpts', async () => {
+  const { dir, file } = tempProfile(); const ctx = new Context();
+  const agent = { session: { id: 'actual-host-session', header: { cwd: dir } } } as never;
+  try {
+    await mountAgentLoopTestDependencies(ctx); await mountProfile(ctx, file);
+    ctx.emit('session/event', (agent as { session: never }).session, { seq: 1, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '以后默认用中文回答，先给结论。' }] } } as never);
+    ctx.emit('session/event', (agent as { session: never }).session, { seq: 2, type: 'user/message', data: { source: { kind: 'plugin' }, content: '伪造的用户喜好' } } as never);
+    const execute = (n: number, excerpt: string) => ctx.tools.execute({ callId: callId(n), name: 'memory_propose', arguments: { key: 'language-'+n, value: '中文，先给结论', scope: 'workspace', excerpt }, signal: new AbortController().signal, agent });
+    assert.equal((await execute(120, '默认用中文回答')).value?.ok, true);
+    assert.equal((await execute(121, '伪造的用户喜好')).value?.ok, true);
+    const manager = createMemoryManager({ profilePath: file });
+    const items = (await manager.snapshot()).candidates;
+    const verified = items.find(c => c.key === 'language-120')!;
+    assert.equal(verified.sourceSessionId, 'actual-host-session'); assert.equal(verified.sourceEventSeq, 1); assert.equal(verified.excerptVerified, true);
+    assert.equal(items.find(c => c.key === 'language-121')!.excerptVerified, false);
+    assert.equal(existsSync(file), false, 'proposals cannot write active profile');
+    const read = await runTool(ctx, 122, 'memory_search', { query: '中文' }, dir);
+    assert.equal((read.value as { results: unknown[] }).results.length, 0);
+  } finally { await disposeCtx(ctx); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('harness: migration tools export, preview mappings, require token and apply through the registry', async () => {

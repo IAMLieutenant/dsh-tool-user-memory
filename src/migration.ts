@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths';
 import { withDocumentLock } from './lock.ts';
 import { recordHistory } from './history.ts';
+import { parseProvenance } from './provenance.ts';
 import { RESERVED_KEYS, parseProfile, serializeProfile, validateKey, type ProfileEntry } from './profile.ts';
 import { TOPIC_MAX_BYTES, buildIndexText, normalizeTopic, parseTopicFile, serializeTopicFile,
   workspaceLocation, projectDirectory, type WorkspaceMode, type WorkspaceTopic } from './workspace.ts';
@@ -92,6 +93,7 @@ function metadata(item: Record<string, unknown>) {
   const invalidReason = string(item.invalidReason, 'invalidReason', 200);
   if (/[\r\n\x00]/.test(invalidReason)) fail('invalidReason must be a single line');
   return {
+    ...(item.provenance === undefined ? {} : { provenance: parseProvenance(item.provenance) }),
     updatedAt: timestamp(item.updatedAt, 'updatedAt'),
     invalidatedAt: timestamp(item.invalidatedAt, 'invalidatedAt'),
     invalidReason,

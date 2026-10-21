@@ -21,6 +21,7 @@ const files =
         'tests/workspace.test.ts',
         'tests/migration.test.ts',
         'tests/manager.test.ts',
+        'tests/candidates.test.ts',
         'tests/consolidate.test.ts',
         'tests/harness.test.ts',
         'tests/loop.test.ts',

@@ -1,7 +1,7 @@
 {
   "name": "dsh-tool-user-memory",
-  "version": "0.4.1",
-  "description": "为 DSH 提供跨会话用户偏好与项目记忆。",
+  "version": "0.4.2",
+  "description": "为 DSH 保存个人背景与偏好，支持自动记录和撤销。",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",

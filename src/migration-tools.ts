@@ -9,7 +9,7 @@ function render(_args: unknown, value: unknown) {
   return [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }];
 }
 
-export function registerMigrationTools(ctx: Context, options: MigrationOptions): void {
+export function registerMigrationTools(ctx: Context, options: MigrationOptions & { allowed?: () => boolean }): void {
   ctx.tools.register(defineTool({
     name: 'memory_export',
     description: 'Export local user memory to a portable JSON file ONLY when the user asks to export or migrate memory. Includes timestamps and invalidated entries. All stored projects are exported by default, even when their old working directories are gone. Returns counts and project IDs, not memory contents. Never uploads the file. Refuses to overwrite an existing destination.',
@@ -19,6 +19,7 @@ export function registerMigrationTools(ctx: Context, options: MigrationOptions):
     },
     output: { schema: { type: 'object', additionalProperties: true }, render },
     async execute(args: { destination: string; scope?: 'all' | 'global' }): Promise<Record<string, JsonValue>> {
+      if (options.allowed && !options.allowed()) return { ok: false, error: '模型端迁移兼容工具已停用，请使用管理页或 CLI。' };
       try { return json({ ok: true, ...await exportMemoryFile(args.destination, options, args.scope ?? 'all') }); }
       catch (error) { return { ok: false, error: String((error as Error).message ?? error) }; }
     },
@@ -38,6 +39,7 @@ export function registerMigrationTools(ctx: Context, options: MigrationOptions):
     },
     output: { schema: { type: 'object', additionalProperties: true }, render },
     async execute(args: { source: string; includeProfile?: boolean; projectMap?: ProjectMapping[]; policy?: ConflictPolicy; dryRun?: boolean; previewToken?: string }): Promise<Record<string, JsonValue>> {
+      if (options.allowed && !options.allowed()) return { ok: false, error: '模型端迁移兼容工具已停用，请使用管理页或 CLI。' };
       const config = { ...options, includeProfile: args.includeProfile, projectMap: args.projectMap, policy: args.policy };
       try {
         return json({ ok: true, ...(args.dryRun === false

@@ -1,48 +1,43 @@
-/** Compact local manager. Memory content is rendered as text, never HTML. */
+/** Simple user-memory manager; migration UI is preserved verbatim. */
 export const MANAGER_HTML = String.raw`<!doctype html>
-<html lang="zh-CN" data-theme="__THEME__">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DSH 记忆管理</title>
+<html lang="zh-CN" data-theme="__THEME__"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DSH 记忆管理</title>
 <style nonce="__NONCE__">
 :root{color-scheme:light;--memory-bg:#fff;--memory-surface:#f5f5f6;--memory-text:#1c1c1f;--memory-muted:#777780;--memory-border:#0000001a;--memory-hover:#2631480f;--memory-font:system-ui,"Microsoft YaHei",sans-serif}
 :root[data-theme=dark]{color-scheme:dark;--memory-bg:#212123;--memory-surface:#303033;--memory-text:#f3f3f5;--memory-muted:#a6a6ad;--memory-border:#ffffff1f;--memory-hover:#ffffff14}
 *{box-sizing:border-box}body{margin:0;background:var(--memory-bg);color:var(--memory-text);font:14px/1.6 var(--memory-font)}main{max-width:760px;margin:auto;padding:24px}.embedded main{padding:18px 24px}.embedded main>header{display:none}h1{font-size:20px;margin:0 0 4px}h2{font-size:16px;font-weight:600;margin:0 0 12px}p{margin:8px 0;color:var(--memory-muted)}button,input,select,textarea{font:inherit;color:inherit}button{border:1px solid var(--memory-border);background:transparent;border-radius:12px;padding:7px 13px;cursor:pointer;white-space:nowrap}button:hover{background:var(--memory-hover)}button:disabled{opacity:.4;cursor:default}button.primary{background:var(--memory-text);border-color:var(--memory-text);color:var(--memory-bg)}button.primary:hover{opacity:.88}button.quiet{border-color:transparent;padding:5px 10px}input,select,textarea{border:1px solid var(--memory-border);border-radius:10px;background:var(--memory-bg);padding:8px 10px;max-width:100%;min-width:0}input[type=text],textarea{width:100%}textarea{min-height:130px;resize:vertical}input:focus,textarea:focus,select:focus,button:focus-visible{outline:2px solid var(--memory-muted);outline-offset:2px}header{margin-bottom:20px}.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.tabs{gap:4px;border-bottom:1px solid var(--memory-border);margin-bottom:18px;padding-bottom:10px}.tabs button{border:0;border-radius:10px;padding:7px 16px;color:var(--memory-muted)}.tabs button[aria-selected=true]{background:var(--memory-surface);color:var(--memory-text);font-weight:600}#notice:empty{display:none}#notice{font-size:13px;margin:0 0 14px;overflow-wrap:anywhere}#notice.error,#editorError{color:var(--memory-text)}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;background:var(--memory-surface);border-radius:14px;padding:18px 20px}.stats strong{display:block;font-size:24px;font-weight:600;line-height:1.4}.stats span{font-size:12px;color:var(--memory-muted)}.capacity{margin:22px 0}.capacity .row{justify-content:space-between;font-size:13px;color:var(--memory-muted)}progress{width:100%;height:5px;border:0;border-radius:8px;accent-color:var(--memory-muted)}progress::-webkit-progress-bar{background:var(--memory-surface);border-radius:8px}progress::-webkit-progress-value{background:var(--memory-muted);border-radius:8px}.hint{font-size:12px}.toolbar{gap:8px;margin-bottom:8px}.toolbar select{width:170px}.toolbar input{flex:1;width:auto;min-width:100px}.memory-row{border-bottom:1px solid var(--memory-border);padding:14px 0;display:flex;align-items:center;gap:14px}.memory-info{flex:1;min-width:0}.memory-title{font-weight:500;overflow-wrap:anywhere}.memory-preview{margin:4px 0 0;font-size:13px;color:var(--memory-muted);overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow-wrap:anywhere;white-space:pre-wrap}.memory-row .row{gap:2px;flex-wrap:nowrap}.badge{font-size:11px;background:var(--memory-surface);color:var(--memory-muted);border-radius:6px;padding:2px 6px;margin-left:8px}.empty{padding:24px 0;text-align:center}.section{padding:0 0 20px;margin-bottom:20px;border-bottom:1px solid var(--memory-border)}.section:last-child{border-bottom:0;margin-bottom:0}label{display:block;margin:12px 0 5px;font-size:13px}input[type=file]{width:100%;font-size:13px}input[type=file]::file-selector-button{font:inherit;background:var(--memory-surface);color:var(--memory-text);border:0;border-radius:8px;padding:7px 12px;margin-right:10px;cursor:pointer}.mapping{margin:14px 0}.mapping label{overflow-wrap:anywhere}.mapping small{display:block;color:var(--memory-muted);font-size:12px}pre{background:var(--memory-surface);border-radius:12px;padding:14px;white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.65 var(--memory-font)}dialog{width:min(520px,94vw);max-height:88vh;overflow:auto;background:var(--memory-bg);color:var(--memory-text);border:1px solid var(--memory-border);border-radius:16px;padding:22px;font:inherit;box-shadow:0 12px 40px #00000020}dialog::backdrop{background:#00000035}.actions{justify-content:flex-end;margin-top:18px}.view-body{white-space:pre-wrap;overflow-wrap:anywhere;max-height:250px;overflow:auto;margin:16px 0}.view-meta{font-size:12px}.pin-option{display:flex;align-items:center;gap:8px;margin:12px 0 0}.pin-option input{width:16px;height:16px;accent-color:var(--memory-text)}#deleteEntry{margin-right:auto}#editorError:empty{display:none}[hidden]{display:none!important}@media(max-width:540px){main,.embedded main{padding:16px}.toolbar{flex-wrap:wrap}.toolbar select{width:calc(100% - 104px)}.toolbar input{order:3;flex-basis:100%}.stats{padding:14px;gap:8px}.stats strong{font-size:21px}.memory-row{gap:4px}.memory-row .row{flex-direction:column;gap:0}.mapping input{width:100%}}
-.review-context{background:var(--memory-surface);border-radius:10px;padding:12px;margin:12px 0;font-size:12px;overflow-wrap:anywhere}.review-context p{margin:4px 0;white-space:pre-wrap}.review-context strong{font-weight:500}.comparison{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}.comparison>div{min-width:0}.comparison pre{margin:6px 0;max-height:180px;overflow:auto}.candidate-actions{justify-content:flex-end;margin-top:12px}.candidate-row{border-bottom:1px solid var(--memory-border);padding:16px 0}.candidate-row h2{font-size:14px;margin-bottom:4px}.candidate-row p{white-space:pre-wrap;overflow-wrap:anywhere}.candidate-row .memory-preview{color:var(--memory-text)}details{margin:12px 0}summary{cursor:pointer;font-size:13px;color:var(--memory-muted)}#reviewError{font-size:13px;white-space:pre-wrap}#reviewError:empty{display:none}.candidate-scope{width:100%}@media(max-width:540px){.comparison{grid-template-columns:1fr}.tabs button{padding:7px 12px}}
+.settings-actions{position:sticky;bottom:0;padding:10px 0;background:var(--memory-bg);border-top:1px solid var(--memory-border);z-index:1}#scopeHint{overflow-wrap:anywhere}.review-context{background:var(--memory-surface);border-radius:10px;padding:12px;margin:12px 0;font-size:12px;overflow-wrap:anywhere}.review-context p{margin:4px 0;white-space:pre-wrap}.review-context strong{font-weight:500}.comparison{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}.comparison>div{min-width:0}.comparison pre{margin:6px 0;max-height:180px;overflow:auto}.candidate-actions{justify-content:flex-end;margin-top:12px}.candidate-row{border-bottom:1px solid var(--memory-border);padding:16px 0}.candidate-row h2{font-size:14px;margin-bottom:4px}.candidate-row p{white-space:pre-wrap;overflow-wrap:anywhere}.candidate-row .memory-preview{color:var(--memory-text)}details{margin:12px 0}summary{cursor:pointer;font-size:13px;color:var(--memory-muted)}#reviewError{font-size:13px;white-space:pre-wrap}#reviewError:empty{display:none}.candidate-scope{width:100%}@media(max-width:540px){.comparison{grid-template-columns:1fr}.tabs button{padding:7px 12px}}
 #candidateEditor{padding:0;overflow:hidden;max-height:calc(100vh - 24px)}#candidateEditor[open]{display:flex;flex-direction:column}.review-header{padding:16px 20px;border-bottom:1px solid var(--memory-border);flex-shrink:0}.review-header h2{margin:0}.review-body{padding:0 20px 14px;overflow:auto;min-height:0;overscroll-behavior:contain}.review-body textarea{min-height:96px}.review-footer{padding:12px 20px;margin:0;border-top:1px solid var(--memory-border);flex-shrink:0;background:var(--memory-bg)}.review-body .hint{margin-top:5px}.review-footer button{padding:7px 11px}@media(max-width:540px){.review-header{padding:14px 16px}.review-body{padding:0 16px 12px}.review-footer{padding:12px 14px;gap:6px}.review-footer button{padding:7px 9px}}
+
+.manager-top{display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--memory-border);margin-bottom:18px;padding-bottom:10px}.manager-top .tabs{border:0;margin:0;padding:0;gap:0;flex-wrap:nowrap}.manager-top .tabs button{padding:7px 12px}.enable-toggle{margin-left:auto;border:0;padding:6px 8px;font-size:12px;color:var(--memory-muted);display:flex;align-items:center;gap:6px}.enable-toggle:before{content:'';width:7px;height:7px;border-radius:50%;background:var(--memory-muted);opacity:.35}.enable-toggle[aria-checked=true]:before{opacity:1;background:var(--memory-text)}.empty{text-align:left;padding:12px 0}.memory-title{border:0;padding:0;background:none;font-weight:500;border-radius:3px;white-space:normal;text-align:left}.memory-preview{display:block;-webkit-line-clamp:unset;white-space:pre-wrap}.memory-row .row{gap:2px}#sourceExcerpt{white-space:pre-wrap;overflow-wrap:anywhere}.toolbar input{order:0;flex:1;min-width:80px}.toolbar{flex-wrap:nowrap}#candidateCount:empty{display:none}#candidateComparison .comparison{margin-bottom:0}.candidate-row .candidate-actions{justify-content:flex-start}.capture-footer{position:sticky;bottom:0;background:var(--memory-bg);padding:10px 0}.candidate-row h2{font-size:14px}.review-body{padding-top:12px}#editor .actions{margin-top:12px}#viewBody{max-height:240px}@media(max-width:540px){main,.embedded main{padding:16px}.manager-top{gap:0}.manager-top .tabs button{padding:7px 8px}.enable-toggle{padding:6px 0 6px 8px}.memory-row .row{flex-direction:row}.toolbar input{order:0;flex-basis:auto}.comparison{grid-template-columns:1fr}}
 </style></head><body class="__BODY_CLASS__"><main>
-<header><h1>记忆管理</h1><p>查看、编辑和迁移记忆。</p></header>
-<nav class="row tabs" aria-label="记忆管理"><button data-tab="overview" aria-selected="true">概览</button><button data-tab="memories" aria-selected="false">记忆</button><button data-tab="candidates" aria-selected="false">待确认 <span id="candidateCount">0</span></button><button data-tab="migration" aria-selected="false">迁移</button></nav>
+<header><h1>记忆管理</h1></header>
+<div class="manager-top"><nav class="row tabs" aria-label="记忆管理"><button data-tab="memories" aria-selected="true">记忆</button><button data-tab="candidates" aria-selected="false">待确认<span id="candidateCount"></span></button><button data-tab="migration" aria-selected="false">备份与迁移</button></nav><button id="enabledToggle" class="enable-toggle" role="switch" aria-label="启用用户记忆" aria-checked="false">已停用</button></div>
 <div id="notice" role="status" aria-live="polite"></div>
-<section id="overview"><div class="stats"><div><strong id="profileCount">—</strong><span>用户记忆</span></div><div><strong id="projectCount">—</strong><span>项目</span></div><div><strong id="topicCount">—</strong><span>项目记忆</span></div></div><div class="capacity"><div class="row"><span>用户记忆容量</span><span id="capacityText">—</span></div><progress id="capacity" aria-label="用户记忆容量" value="0" max="1"></progress></div><p>记忆保存在本机，可在“记忆”中查看和编辑。</p><p class="hint">换电脑时，在“迁移”中导出或导入。统计包含已失效的记忆。</p></section>
-<section id="memories" hidden><div class="row toolbar"><select id="scope" aria-label="记忆范围"><option value="">用户记忆</option></select><input id="search" type="text" placeholder="搜索记忆" aria-label="搜索记忆"><button id="add">新增记忆</button></div><div id="list"></div></section>
-<section id="candidates" hidden><p class="hint">候选尚未生效。核对内容与保存范围后，才会提供给模型。</p><div id="candidateList"></div></section>
+<section id="memories"><div class="row toolbar"><input id="search" type="text" placeholder="搜索记忆" aria-label="搜索记忆"><button id="add">新增记忆</button></div><div id="list"></div></section>
+<section id="candidates" hidden><div id="candidateList"></div></section>
+<section id="capture" hidden><h2>添加记忆</h2><label for="captureKey">名称</label><input id="captureKey" type="text" maxlength="64" placeholder="例如：回答偏好"><label for="captureValue">内容</label><textarea id="captureValue" maxlength="12000"></textarea><details><summary>来源</summary><select id="sourceMessage" aria-label="来源消息" style="width:100%"></select><p id="sourceExcerpt"></p></details><p id="captureError" role="alert"></p><div class="row actions capture-footer"><button id="prepareMessage" class="primary" type="button">保存</button></div></section>
 <section id="migration" hidden><div class="section"><h2>导出到另一台电脑</h2><p class="hint">生成文件后，复制到新电脑导入。</p><button id="export">导出记忆</button></div><div class="section"><h2>导入另一台电脑的记忆</h2><input id="importFile" type="file" accept=".json,application/json" aria-label="选择记忆导出文件"><p class="hint" id="importInfo">选择旧电脑导出的 JSON 文件。同名记忆保留本机内容。</p><div id="mappings"></div><div class="row"><button id="previewImport" disabled>预览导入</button><button id="applyImport" class="primary" disabled>确认导入</button></div><pre id="importPreview" hidden></pre><button id="rollbackImport" hidden>撤销本次导入</button></div><p class="hint">导出包含用户与项目记忆，不包含修改历史和归档。</p></section>
 </main>
-<dialog id="viewer" aria-labelledby="viewerTitle"><h2 id="viewerTitle"></h2><p class="view-meta" id="viewMeta"></p><div class="view-body" id="viewBody"></div><details id="viewEvidence"><summary>来源与修改记录</summary><div id="viewOrigin" class="review-context"></div></details><div class="row actions"><button type="button" id="closeViewer">关闭</button><button type="button" id="editViewed" class="primary">编辑记忆</button></div></dialog>
-<dialog id="candidateEditor" aria-labelledby="candidateTitle"><div class="review-header"><h2 id="candidateTitle">确认记忆</h2></div><div class="review-body"><details><summary>查看来源与原文</summary><div id="candidateSource" class="review-context"></div></details><label for="candidateScope">保存范围</label><select id="candidateScope" class="candidate-scope"></select><p id="candidateScopeHint" class="hint"></p><label for="candidateKey">名称</label><input id="candidateKey" type="text" maxlength="128"><label for="candidateValue">内容</label><textarea id="candidateValue"></textarea><label id="candidatePinOption" class="pin-option"><input id="candidatePinned" type="checkbox">置顶记忆</label><div id="candidateComparison" hidden><div class="comparison"><div><strong>现有内容</strong><pre id="candidateBefore"></pre></div><div><strong>确认后</strong><pre id="candidateAfter"></pre></div></div><p class="hint" id="candidateEffect"></p></div><p id="reviewError" role="alert"></p></div><div class="row actions review-footer"><button id="cancelCandidate" type="button">取消</button><button id="previewCandidate" type="button">预览变更</button><button id="acceptCandidate" type="button" class="primary" disabled>确认保存</button></div></dialog>
-<dialog id="editor" aria-labelledby="editorTitle"><h2 id="editorTitle">编辑记忆</h2><label for="entryKey">名称</label><input id="entryKey" type="text" maxlength="64"><label for="entryValue">内容</label><textarea id="entryValue"></textarea><label id="pinOption" class="pin-option"><input id="entryPinned" type="checkbox">置顶记忆</label><p class="hint" id="editScope"></p><p id="editorError" role="alert"></p><div class="row actions"><button type="button" id="deleteEntry" class="quiet" hidden>删除记忆</button><button type="button" id="cancelEditor">取消</button><button type="button" id="saveEntry" class="primary">保存</button></div></dialog>
-<dialog id="confirmation" aria-labelledby="confirmationTitle"><h2 id="confirmationTitle">确认导入</h2><p id="confirmationText"></p><div class="row actions"><button type="button" id="cancelConfirmation">取消</button><button type="button" id="acceptConfirmation" class="primary">确认</button></div></dialog>
+<dialog id="viewer" aria-labelledby="viewerTitle"><h2 id="viewerTitle"></h2><div class="view-body" id="viewBody"></div><details id="viewEvidence"><summary>来源与修改记录</summary><div id="viewOrigin" class="review-context"></div></details><div class="row actions"><button id="closeViewer" type="button">关闭</button><button id="editViewed" class="primary" type="button">编辑</button></div></dialog>
+<dialog id="editor" aria-labelledby="editorTitle"><h2 id="editorTitle">新增记忆</h2><label for="entryKey">名称</label><input id="entryKey" type="text" maxlength="64" placeholder="例如：回答偏好"><label for="entryValue">内容</label><textarea id="entryValue" maxlength="12000" placeholder="例如：默认中文，先说结论。"></textarea><p id="editorError" role="alert"></p><div class="row actions"><button id="cancelEditor" type="button">取消</button><button id="saveEntry" class="primary" type="button">保存</button></div></dialog>
+<dialog id="candidateEditor" aria-labelledby="candidateTitle"><div class="review-header"><h2 id="candidateTitle">确认记忆</h2></div><div class="review-body"><label for="candidateKey">名称</label><input id="candidateKey" type="text" maxlength="64"><label for="candidateValue">内容</label><textarea id="candidateValue" maxlength="12000"></textarea><details><summary>来源</summary><div id="candidateSource" class="review-context"></div></details><div id="candidateComparison" hidden><div class="comparison"><div><strong>原有记忆</strong><pre id="candidateBefore"></pre></div><div><strong>替换为</strong><pre id="candidateAfter"></pre></div></div></div><p id="reviewError" role="alert"></p></div><div class="row actions review-footer"><button id="cancelCandidate" type="button">取消</button><button id="acceptCandidate" type="button" class="primary">保存</button></div></dialog>
+<dialog id="confirmation" aria-labelledby="confirmationTitle"><h2 id="confirmationTitle">确认导入</h2><p id="confirmationText"></p><div class="row actions"><button id="cancelConfirmation" type="button">取消</button><button id="acceptConfirmation" class="primary" type="button">确认</button></div></dialog>
 <script nonce="__NONCE__">
 'use strict';
-const TOKEN='__TOKEN__', API='/_dsh/user-memory/api';
-const $=id=>document.getElementById(id);
-let state, selected=null, viewed=null, editorScope=null, uploadDoc='', preview=null, lastBackup='', busy=false;
-let reviewing=null,candidatePreview=null,candidatePinChanged=false;
+const TOKEN='__TOKEN__',API='/_dsh/user-memory/api',$=id=>document.getElementById(id);
+let state,selected=null,viewed=null,reviewing=null,candidatePreview=null,uploadDoc='',preview=null,lastBackup='',busy=false;
 function node(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
 function notice(text,error=false){$('notice').textContent=text;$('notice').className=error?'error':'';}
 function projectName(path){return path.split(/[\\/]/).filter(Boolean).pop()||'项目';}
-function size(bytes){return (bytes/1024).toFixed(1)+' KB';}
-function scope(){return $('scope').value?{scope:'workspace',projectId:$('scope').value}:{scope:'global'};}
-function sourceLabel(p){return p.excerptVerified?'用户消息片段（已匹配会话记录'+(p.sourceEventSeq!==undefined?' #'+p.sourceEventSeq:'')+'；含义仍需核对）：':'模型提供的参考原文（未核验）：';}
+function sourceLabel(p){return p.excerptVerified?(p.sourceRole==='assistant'?'助手回复':'用户原话'):'参考原文（未核验）';}
 async function api(action,values={}){
- let r,j;try{r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json','X-User-Memory-Token':TOKEN},body:JSON.stringify({action,...values})});j=await r.json();}
- catch{throw new Error('无法确认操作结果。请检查 DSH 是否仍在运行，重新打开管理窗口核对记忆，再决定是否重试。');}
- if(!j.ok){if(j.code==='PREVIEW_CHANGED')invalidatePreview();throw new Error(j.error||'操作未完成，请重新打开管理窗口后重试。');}return j.result;
+ let r,j;try{r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json','X-User-Memory-Token':TOKEN},body:JSON.stringify({action,...values})});j=await r.json();}catch{throw new Error('连接失败，请重新打开记忆管理核对结果。');}
+ if(!j.ok){if(j.code==='PREVIEW_CHANGED')invalidatePreview();throw new Error(j.error||'操作未完成，请重试。');}return j.result;
 }
 async function run(job){
- if(busy)return;busy=true;
- const controls=[...document.querySelectorAll('button,select,input,textarea')];const disabled=controls.map(b=>b.disabled);controls.forEach(b=>b.disabled=true);
+ if(busy)return;busy=true;const controls=[...document.querySelectorAll('button,select,input,textarea')],disabled=controls.map(e=>e.disabled);controls.forEach(e=>e.disabled=true);
  try{await job();}catch(e){if($('candidateEditor').open)$('reviewError').textContent=e.message;else if($('editor').open)$('editorError').textContent=e.message;else notice(e.message,true);}
- finally{controls.forEach((b,i)=>{if(b.isConnected)b.disabled=disabled[i];});busy=false;syncImport();syncCandidate();}
+ finally{controls.forEach((e,i)=>{if(e.isConnected)e.disabled=disabled[i];});busy=false;syncImport();syncCandidate();if(!$('capture').hidden)$('prepareMessage').disabled=!sourceMessages.length;}
 }
 function ask(message,title='确认导入',acceptText='确认'){return new Promise(resolve=>{
  const d=$('confirmation');$('confirmationTitle').textContent=title;$('confirmationText').textContent=message;$('acceptConfirmation').textContent=acceptText;d.returnValue='';
@@ -50,75 +45,37 @@ function ask(message,title='确认导入',acceptText='确认'){return new Promis
  d.onclose=()=>resolve(d.returnValue==='accept');accept.onclick=()=>d.close('accept');cancel.onclick=()=>d.close('cancel');d.showModal();
 });}
 function render(){
- renderCandidates();
- $('profileCount').textContent=String(state.stats.profileEntries);$('projectCount').textContent=String(state.projects.length);$('topicCount').textContent=String(state.stats.projectTopics);
- $('capacityText').textContent=size(state.stats.activeBytes)+' / '+size(state.stats.maxBytes);$('capacity').max=state.stats.maxBytes;$('capacity').value=state.stats.activeBytes;
- const q=$('search').value.toLowerCase();const entries=state.entries.filter(e=>(e.key+' '+e.value).toLowerCase().includes(q)).sort((a,b)=>Number(!!b.pinned)-Number(!!a.pinned));$('list').replaceChildren();
- if(!entries.length)$('list').append(node('p',q?'没有匹配的记忆。':'还没有记忆，可新增一条。','empty'));
- for(const e of entries){
-  const row=node('article',undefined,'memory-row'),info=node('div',undefined,'memory-info'),title=node('div',e.key,'memory-title');
-  if(e.pinned)title.append(node('span','置顶','badge'));
-  if(e.invalidatedAt)title.append(node('span','已失效','badge'));
-  info.append(title,node('p',e.value,'memory-preview'));
-  const actions=node('div',undefined,'row'),view=node('button','查看','quiet'),edit=node('button','编辑','quiet');
-  view.setAttribute('aria-label','查看 '+e.key);edit.setAttribute('aria-label','编辑 '+e.key);
-  view.onclick=()=>openViewer(e);edit.onclick=()=>openEditor(e);actions.append(view,edit);row.append(info,actions);$('list').append(row);
+ $('enabledToggle').setAttribute('aria-checked',String(state.enabled));$('enabledToggle').textContent=state.enabled?'已启用':'已停用';
+ const q=$('search').value.toLowerCase(),entries=state.entries.filter(e=>!e.invalidatedAt&&(e.key+' '+e.value).toLowerCase().includes(q));$('list').replaceChildren();
+ if(!entries.length)$('list').append(node('p',q?'没有匹配的记忆。':'暂无记忆。','empty'));
+ for(const e of entries){const row=node('article',undefined,'memory-row'),info=node('div',undefined,'memory-info'),title=node('button',e.key,'memory-title');title.onclick=()=>openViewer(e);info.append(title,node('p',e.value,'memory-preview'));
+  const actions=node('div',undefined,'row'),edit=node('button','编辑','quiet'),remove=node('button','删除','quiet');edit.setAttribute('aria-label','编辑 '+e.key);remove.setAttribute('aria-label','删除 '+e.key);edit.onclick=()=>openEditor(e);remove.onclick=()=>run(()=>deleteMemory(e));actions.append(edit,remove);row.append(info,actions);$('list').append(row);
  }
+ renderCandidates();if(state.settings.warning)notice(state.settings.warning,true);
 }
-async function refresh(){
- const id=$('scope').value;state=await api('snapshot',{projectId:id});const sel=$('scope');sel.replaceChildren(new Option('用户记忆',''));
- for(const p of state.projects){const option=new Option(projectName(p.sourcePath)||p.id,p.id);option.title=p.sourcePath;sel.add(option);}sel.value=id;render();
-}
-function openViewer(e){
- viewed=e;$('viewerTitle').textContent=e.key;$('viewBody').textContent=e.value;
- const date=e.updatedAt?new Date(e.updatedAt):null;
- $('viewMeta').textContent=(e.pinned?'置顶 · ':'')+(e.invalidatedAt?'已失效'+(e.invalidReason?' · '+e.invalidReason:''):'有效')+(date&&!Number.isNaN(date.getTime())?' · 更新于 '+date.toLocaleDateString('zh-CN'):'');
- const origin=$('viewOrigin');origin.replaceChildren();const p=e.provenance;
- origin.append(node('p',p?(p.method==='candidate'?'经候选确认保存':p.method==='manual'?'在管理页手动保存':'内容后来被工具修改，需重新核对'):'旧版记忆，未记录来源。'));
- if(p){if(p.createdAt)origin.append(node('p','创建于 '+new Date(p.createdAt).toLocaleString('zh-CN')));if(p.confirmedAt)origin.append(node('p','确认于 '+new Date(p.confirmedAt).toLocaleString('zh-CN')));if(p.sourceSessionId)origin.append(node('p','来源会话：'+p.sourceSessionId));if(p.excerpt)origin.append(node('p',sourceLabel(p)+'\n'+p.excerpt));if(p.previousValue)origin.append(node('p','被替代的内容：\n'+p.previousValue));}
- $('viewer').showModal();
-}
-function openEditor(e){
- selected=e;editorScope=scope();$('editorTitle').textContent=e?'编辑记忆':'新增记忆';$('entryKey').value=e?.key||'';$('entryKey').readOnly=!!e;$('entryValue').value=e?.value||'';$('editorError').textContent='';
- $('deleteEntry').hidden=!e;$('pinOption').hidden=editorScope.scope!=='global';$('entryPinned').checked=!!e?.pinned;
- $('editScope').textContent=(editorScope.scope==='global'?'保存到用户记忆':'保存到当前项目')+(e?.invalidatedAt?'；修改内容后重新启用，仅置顶保留失效状态。':'。')+(editorScope.scope==='global'?' 置顶优先保留，模型读取仍受长度限制。':'');$('editor').showModal();
-}
-$('cancelEditor').onclick=()=>$('editor').close();
-$('closeViewer').onclick=()=>$('viewer').close();
-$('editViewed').onclick=()=>{$('viewer').close();openEditor(viewed);};
-function renderCandidates(){
- const items=state.candidates||[];$('candidateCount').textContent=String(items.length);const list=$('candidateList');list.replaceChildren();
- if(!items.length){list.append(node('p','暂无待确认记忆。可让助手使用 memory_propose 提交值得长期保存的信息，或在“记忆”中直接新增。','empty'));return;}
- for(const c of items){const row=node('article',undefined,'candidate-row');row.append(node('h2',c.key),node('p',c.value,'memory-preview'),node('p',(c.scope==='workspace'?'建议保存到项目：'+projectName(c.workspacePath):'建议保存到用户记忆')+(c.reason?'；'+c.reason:''),'hint'));
- const buttons=node('div',undefined,'row candidate-actions'),dismiss=node('button','忽略','quiet'),review=node('button','核对并保存');dismiss.setAttribute('aria-label','忽略 '+c.key);review.setAttribute('aria-label','核对并保存 '+c.key);
- dismiss.onclick=()=>run(async()=>{await api('dismiss-candidate',{id:c.id,revision:c.revision});await refresh();notice('候选已忽略，没有写入记忆。');});review.onclick=()=>openCandidate(c);buttons.append(dismiss,review);row.append(buttons);list.append(row);}
-}
-function candidateValues(){return{id:reviewing.id,revision:reviewing.revision,key:$('candidateKey').value.trim(),value:$('candidateValue').value,scope:$('candidateScope').value?'workspace':'global',projectId:$('candidateScope').value,...(candidatePinChanged?{pinned:$('candidatePinned').checked}:{})};}
-function syncCandidate(){$('acceptCandidate').disabled=busy||!candidatePreview;}
-function invalidateCandidate(){candidatePreview=null;$('candidateComparison').hidden=true;syncCandidate();const global=!$('candidateScope').value;$('candidatePinOption').hidden=!global;$('candidateScopeHint').textContent=global?'用户记忆会提供给所有项目；只保存跨项目通用的信息。':'仅用于来源项目，其他项目不会读取这条记忆。';}
-function openCandidate(c){
- reviewing=c;candidatePinChanged=false;$('reviewError').textContent='';$('candidateTitle').textContent='确认记忆';$('candidateKey').value=c.key;$('candidateValue').value=c.value;$('candidatePinned').checked=false;
- const s=$('candidateScope');s.replaceChildren(new Option('用户记忆 · 所有项目',''));if(c.projectId)s.add(new Option('项目记忆 · '+projectName(c.workspacePath),c.projectId));s.value=c.scope==='workspace'?c.projectId:'';
- const source=$('candidateSource');source.replaceChildren(node('p','模型提出的候选，请核对后保存。'));if(c.sourceSessionId)source.append(node('p','来源会话：'+c.sourceSessionId));source.append(node('p','提出于 '+new Date(c.createdAt).toLocaleString('zh-CN')));if(c.reason)source.append(node('p','保存原因：'+c.reason));if(c.excerpt)source.append(node('p',sourceLabel(c)+'\n'+c.excerpt));
- invalidateCandidate();$('candidateEditor').showModal();$('candidateValue').focus();
-}
-for(const id of ['candidateKey','candidateValue','candidateScope'])$(id).oninput=invalidateCandidate;
-$('candidatePinned').oninput=()=>{candidatePinChanged=true;invalidateCandidate();};
-$('cancelCandidate').onclick=()=>$('candidateEditor').close();
-$('previewCandidate').onclick=()=>run(async()=>{candidatePreview=null;$('reviewError').textContent='';const p=await api('preview-candidate',candidateValues());candidatePreview=p;if(!candidatePinChanged)$('candidatePinned').checked=p.pinned;$('candidateBefore').textContent=p.replacing?p.before:'没有同名记忆，将新增。';$('candidateAfter').textContent=p.after;$('candidateEffect').textContent=p.replacing?'确认后同名记忆只保留新内容参与检索与注入，旧内容保存在修改历史中。':'确认后才会加入记忆，后续请求按范围与预算读取。';$('candidateComparison').hidden=false;$('candidateComparison').scrollIntoView({block:'nearest'});});
-$('acceptCandidate').onclick=()=>run(async()=>{if(!candidatePreview)return;$('reviewError').textContent='';await api('accept-candidate',{...candidateValues(),previewToken:candidatePreview.previewToken});$('candidateEditor').close();candidatePreview=null;await refresh();notice('记忆已确认保存，后续请求按范围与预算读取。');});
+async function refresh(){state=await api('snapshot');render();}
+function evidence(target,p){target.replaceChildren();if(!p){target.append(node('p','未记录来源。'));return;}if(p.excerpt)target.append(node('p',sourceLabel(p)+'：\n'+p.excerpt));if(p.previousValue)target.append(node('p','原有内容：\n'+p.previousValue));if(p.confirmedAt)target.append(node('p','保存于 '+new Date(p.confirmedAt).toLocaleString('zh-CN')));if(!target.childNodes.length)target.append(node('p','手动保存。'));}
+function openViewer(e){viewed=e;$('viewerTitle').textContent=e.key;$('viewBody').textContent=e.value;evidence($('viewOrigin'),e.provenance);$('viewer').showModal();}
+function openEditor(e){selected=e;$('editorTitle').textContent=e?'编辑记忆':'新增记忆';$('entryKey').value=e?.key||'';$('entryKey').readOnly=!!e;$('entryValue').value=e?.value||'';$('editorError').textContent='';$('editor').showModal();$('entryValue').focus();}
+$('closeViewer').onclick=()=>$('viewer').close();$('editViewed').onclick=()=>{$('viewer').close();openEditor(viewed);};$('cancelEditor').onclick=()=>$('editor').close();
 $('saveEntry').onclick=()=>run(async()=>{
- $('editorError').textContent='';const key=$('entryKey').value.trim(),value=$('entryValue').value;if(!key||!value.trim())throw new Error('请填写名称和内容');
- const target={...editorScope};const revision=selected?.revision||(target.scope==='global'?state.revision:(await api('history',{...target,key})).revision);
- const pin=target.scope==='global'?{pinned:$('entryPinned').checked}:{};
- const onlyPin=selected&&target.scope==='global'&&value===selected.value&&pin.pinned!==!!selected.pinned;
- const result=onlyPin?await api('set-pinned',{...target,key,revision,...pin}):await api('update',{...target,key,value,mode:'set',createOnly:!selected,revision,...pin});$('editor').close();await refresh();
- notice(result.truncated||result.evicted?.length?'记忆已保存，但容量不足：'+(result.evicted?.length?result.evicted.length+' 条旧记忆移入归档。':'')+(result.truncated?'当前记忆被截短，完整内容已归档。':'')+'可精简用户记忆或在插件设置中提高 maxBytes。':'记忆已保存。');
+ const key=$('entryKey').value.trim(),value=$('entryValue').value;if(!key||!value.trim())throw new Error('请填写名称和内容');
+ const r=await api('update',{scope:'global',key,value,mode:'set',createOnly:!selected,revision:selected?.revision||state.revision});$('editor').close();await refresh();notice(r.truncated||r.evicted?.length?'容量不足，部分内容已移入归档。':'已保存。');
 });
-$('deleteEntry').onclick=()=>run(async()=>{
- if(!selected||!await ask('删除“'+selected.key+'”后，它将不再提供给模型。历史快照仍保留，便于恢复；这不是彻底清除。','删除记忆','确认删除'))return;
- $('editorError').textContent='';await api('update',{...editorScope,key:selected.key,value:'',mode:'remove',revision:selected.revision});$('editor').close();await refresh();notice('记忆已删除，不再提供给模型。历史快照仍保留。');
-});
+async function deleteMemory(e){if(!await ask('删除“'+e.key+'”？历史备份仍会保留。','删除记忆','删除'))return;await api('update',{scope:'global',key:e.key,value:'',mode:'remove',revision:e.revision});await refresh();notice('已删除。');}
+$('enabledToggle').onclick=()=>run(async()=>{await api('set-enabled',{enabled:!state.enabled,revision:state.settings.revision});await refresh();notice('');});
+function renderCandidates(){const items=state.candidates||[];$('candidateCount').textContent=items.length?' '+items.length:'';const list=$('candidateList');list.replaceChildren();if(!items.length){list.append(node('p','暂无待确认记忆。','empty'));return;}
+ for(const c of items){const row=node('article',undefined,'candidate-row');row.append(node('h2',c.key),node('p',c.value,'memory-preview'));const buttons=node('div',undefined,'row candidate-actions'),save=node('button','保存'),edit=node('button','修改','quiet'),ignore=node('button','忽略','quiet');save.setAttribute('aria-label','保存 '+c.key);edit.setAttribute('aria-label','修改 '+c.key);ignore.setAttribute('aria-label','忽略 '+c.key);save.onclick=()=>run(()=>saveCandidate(c));edit.onclick=()=>openCandidate(c);ignore.onclick=()=>run(async()=>{await api('dismiss-candidate',{id:c.id,revision:c.revision});await refresh();notice('');});buttons.append(save,edit,ignore);row.append(buttons);list.append(row);}
+}
+function candidateValues(c=reviewing){return{id:c.id,revision:c.revision,scope:'global',key:c===reviewing?$('candidateKey').value.trim():c.key,value:c===reviewing?$('candidateValue').value:c.value};}
+function syncCandidate(){$('acceptCandidate').disabled=busy;}
+function invalidateCandidate(){candidatePreview=null;$('candidateComparison').hidden=true;$('acceptCandidate').textContent='保存';}
+function openCandidate(c){reviewing=c;$('candidateTitle').textContent='确认记忆';$('candidateKey').value=c.key;$('candidateValue').value=c.value;$('reviewError').textContent='';evidence($('candidateSource'),c);invalidateCandidate();$('candidateEditor').showModal();}
+function comparison(p){candidatePreview=p;$('candidateBefore').textContent=p.before;$('candidateAfter').textContent=p.after;$('candidateComparison').hidden=false;$('acceptCandidate').textContent='确认替换';$('candidateComparison').scrollIntoView({block:'nearest'});}
+async function commitCandidate(values,p){await api('accept-candidate',{...values,previewToken:p.previewToken});if($('candidateEditor').open)$('candidateEditor').close();reviewing=null;candidatePreview=null;await refresh();await showTab('memories');notice('已保存。');}
+async function saveCandidate(c){const values={id:c.id,revision:c.revision,scope:'global',key:c.key,value:c.value},p=await api('preview-candidate',values);if(p.replacing&&p.before!==p.after){openCandidate(c);comparison(p);return;}await commitCandidate(values,p);}
+$('candidateKey').oninput=invalidateCandidate;$('candidateValue').oninput=invalidateCandidate;$('cancelCandidate').onclick=()=>{$('candidateEditor').close();reviewing=null;};
+$('acceptCandidate').onclick=()=>run(async()=>{const values=candidateValues();if(candidatePreview){await commitCandidate(values,candidatePreview);return;}const p=await api('preview-candidate',values);if(p.replacing&&p.before!==p.after){comparison(p);return;}await commitCandidate(values,p);});
 function importOptions(){return{includeProfile:true,policy:'keep-local',projectMap:[...$('mappings').querySelectorAll('input')].filter(i=>i.value.trim()).map(i=>({id:i.dataset.id,path:i.value.trim()}))};}
 function invalidatePreview(){preview=null;$('importPreview').hidden=true;syncImport();}
 function syncImport(){$('previewImport').disabled=busy||!uploadDoc;$('applyImport').disabled=busy||!preview;}
@@ -159,10 +116,15 @@ $('rollbackImport').onclick=()=>run(async()=>{
 $('export').onclick=()=>run(async()=>{
  const b=await api('export'),url=URL.createObjectURL(new Blob([JSON.stringify(b,null,2)+'\n'],{type:'application/json'})),a=node('a');a.href=url;a.download='dsh-memory-'+new Date().toISOString().slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);notice('导出文件已生成，请妥善保存。');
 });
-for(const b of document.querySelectorAll('[data-tab]'))b.onclick=()=>run(async()=>{
- for(const x of document.querySelectorAll('[data-tab]'))x.setAttribute('aria-selected',String(x===b));for(const id of ['overview','memories','candidates','migration'])$(id).hidden=id!==b.dataset.tab;
- notice('');await refresh();
-});
-$('scope').onchange=()=>run(refresh);$('search').oninput=render;$('add').onclick=()=>openEditor(null);
-run(refresh);
+
+$('search').oninput=render;$('add').onclick=()=>openEditor(null);
+const entryParams=new URLSearchParams(location.search),entrySession=entryParams.get('session')||'',entryTurn=entryParams.has('turn')?Number(entryParams.get('turn')):undefined;
+let sourceMessages=[];
+function selectSource(){const m=sourceMessages.find(m=>String(m.seq)===$('sourceMessage').value);$('captureValue').value=m?m.text.slice(0,2000):'';$('sourceExcerpt').textContent=m?(m.role==='assistant'?'助手回复：':'用户原话：')+m.text.slice(0,2000):'暂无可选消息。';$('prepareMessage').disabled=!m;}
+async function loadSources(){if(!entrySession||entryTurn===undefined)throw new Error('没有可选消息。');const result=await api('source-messages',{sessionId:entrySession,turn:entryTurn});sourceMessages=result.messages;$('sourceMessage').replaceChildren();for(const m of sourceMessages)$('sourceMessage').add(new Option((m.role==='user'?'我的话':'助手回复')+' · '+m.text.replace(/\s+/g,' ').slice(0,30),String(m.seq)));selectSource();}
+$('sourceMessage').onchange=selectSource;
+$('prepareMessage').onclick=()=>run(async()=>{const m=sourceMessages.find(m=>String(m.seq)===$('sourceMessage').value);if(!m)return;const key=$('captureKey').value.trim(),value=$('captureValue').value;if(!key||!value.trim())throw new Error('请填写名称和内容');const r=await api('propose-message',{sessionId:entrySession,seq:m.seq,excerpt:m.text.slice(0,2000),key,value});await saveCandidate(r.candidate);});
+async function showTab(tab){for(const id of ['memories','candidates','migration','capture'])$(id).hidden=id!==tab;for(const b of document.querySelectorAll('[data-tab]'))b.setAttribute('aria-selected',String(b.dataset.tab===tab));if(tab==='capture')await loadSources();}
+for(const b of document.querySelectorAll('[data-tab]'))b.onclick=()=>run(async()=>{notice('');await refresh();await showTab(b.dataset.tab);});
+run(async()=>{await refresh();if(entryParams.get('tab')==='capture')await showTab('capture');});
 </script></body></html>`;

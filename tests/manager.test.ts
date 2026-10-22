@@ -18,7 +18,7 @@ import { managerError } from '../src/manager-errors.ts';
 async function fixture(maxBytes = 8192) {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-manager-'));
   const profilePath = join(dir, 'user.md'); const workspaceBase = join(dir, 'workspaces');
-  const options = { profilePath, workspaceBase, maxBytes };
+  const options = { profilePath, workspaceBase, maxBytes, userOnly: false };
   return { dir, options, store: createMemoryStore({ path: profilePath, maxBytes }), manager: createMemoryManager(options), cleanup: () => rm(dir, { recursive: true, force: true }) };
 }
 
@@ -256,7 +256,7 @@ test('web: local page works, API rejects foreign origins, missing token, wrong m
     const page = await fetch(url); assert.equal(page.status, 200);
     assert.ok(page.headers.get('content-security-policy')!.includes('nonce-'));
     const html = await page.text(); const token = /TOKEN='([a-f0-9]+)'/.exec(html)![1]!;
-    assert.ok(html.includes('data-tab="overview"')); assert.ok(!html.includes('__TOKEN__'));
+    assert.ok(html.includes('data-tab="memories"')); assert.ok(!html.includes('data-tab="overview"')); assert.ok(!html.includes('__TOKEN__'));
     const embedded = await fetch(url + '?embedded=1');
     assert.ok((await embedded.text()).includes('body class="embedded"'));
     assert.ok(embedded.headers.get('content-security-policy')!.includes("frame-ancestors 'self'"));
@@ -308,12 +308,15 @@ test('client: plugin-row button opens one in-window dialog, closes and cleans up
     getComputedStyle() { return { fontFamily: 'DSH Test Font', getPropertyValue() { return dark ? '#212123' : '#fff'; } }; },
     window: { __ModuleLoader__: { load(e: typeof entry) { entry = e; } } } });
   assert.ok(entry); let registered = ''; let card: (() => Element) | undefined;
+  let turnCard: ((props: Record<string, unknown>) => Element | null) | undefined;
+  let turnInject: ((sessionId: string) => Record<string, unknown>) | undefined;
   const disposers: (() => void)[] = [];
   const plugin = entry!.factory(name => { assert.equal(name, 'react'); return {
+    useState() { return [{ items: [], token: '', error: '' }, () => {}]; }, useEffect() {},
     createElement(tag: string, props: Record<string, unknown>, ...children: Element[]) { return { tag, props, children }; } }; });
   plugin.apply({ effect(f: () => (() => void) | undefined) { const dispose = f(); if (dispose) disposers.push(dispose); },
-    slots: { inject(name: string, f: () => unknown) { assert.equal(name, 'plugins.bundle.config'); return f(); },
-      register(meta: { key: string }, component: () => Element) { registered = meta.key; card = component; return () => {}; } } });
+    slots: { inject(name: string, f: () => unknown) { assert.ok(['plugins.bundle.config', 'conversation.chat.turnTail'].includes(name)); return f(); },
+      register(meta: { name: string; key?: string; inject?: (sessionId: string) => Record<string, unknown> }, component: () => Element) { if (meta.name === 'plugins.bundle.config') { registered = meta.key!; card = component; } else { turnCard = component; turnInject = meta.inject; } return () => {}; } } });
   assert.equal(registered, 'dsh-tool-user-memory');
   const button = card!().children[0]!;
   assert.equal(button.tag, 'button'); assert.equal(button.props!.target, undefined);
@@ -331,7 +334,13 @@ test('client: plugin-row button opens one in-window dialog, closes and cleans up
   elements.find(e => e.tag === 'button')!.events.click!();
   assert.equal(modal.open, false); assert.equal(modal.removed, true);
   assert.equal(disconnected, true);
-  open(); const reopened = elements.filter(e => e.tag === 'dialog')[1]!;
+  const actions = turnCard!({ ...turnInject!('session/a b'), turn: { turn: 7 } })!;
+  assert.equal(actions.children[0]!.children[0], '记住');
+  (actions.children[0]!.props!.onClick as () => void)();
+  const captureFrame = elements.filter(e => e.tag === 'iframe').at(-1)!;
+  assert.match(captureFrame.src!, /session=session%2Fa%20b&turn=7&tab=capture/);
+  assert.equal(turnCard!({ turn: {} }), null, 'unknown host turn shapes must not create broken actions');
+  const reopened = elements.filter(e => e.tag === 'dialog')[1]!;
   for (const dispose of disposers.reverse()) dispose();
   assert.equal(reopened.open, false); assert.equal(reopened.removed, true);
 });

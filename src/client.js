@@ -18,7 +18,7 @@ window.__ModuleLoader__.load({
           if (current.open) current.close();
           current.remove();
         }
-        function openManager() {
+        function openManager(entry) {
           if (dialog) return;
           var previousFocus = document.activeElement;
           dialog = document.createElement('dialog');
@@ -51,7 +51,8 @@ window.__ModuleLoader__.load({
           close.addEventListener('click', closeManager);
           var frame = document.createElement('iframe');
           frame.src = '/_dsh/user-memory?embedded=1&theme=' + (document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light');
-          frame.title = '个人与项目记忆';
+          if (entry && typeof entry.sessionId === 'string') frame.src += '&session=' + encodeURIComponent(entry.sessionId) + '&turn=' + encodeURIComponent(entry.turn) + '&tab=' + encodeURIComponent(entry.tab);
+          frame.title = '用户记忆';
           frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-downloads');
           Object.assign(frame.style, { width: '100%', flex: '1', minHeight: '0', border: '0' });
           // Read DSH's resolved palette, including its custom theme overrides.
@@ -96,7 +97,43 @@ window.__ModuleLoader__.load({
             return ctx.slots.register({ name: 'plugins.bundle.config', key: 'dsh-tool-user-memory' }, function () {
               return React.createElement('div', { style: { padding: '12px 0' } },
                 React.createElement('button', { type: 'button', onClick: openManager }, '管理记忆'),
-                React.createElement('p', null, '确认候选、查看和编辑记忆，或迁移到另一台电脑。'));
+                React.createElement('p', null, '查看和修改用户记忆。'));
+            });
+          });
+        });
+        ctx.effect(function () {
+          return ctx.slots.inject('conversation.chat.turnTail', function () {
+            return ctx.slots.register({ name: 'conversation.chat.turnTail', id: 'user-memory', order: 30,
+              inject: function (sessionId) { return {
+                sessionId: sessionId,
+                remember: function (turn) { openManager({ sessionId: sessionId, turn: turn, tab: 'capture' }); }
+              }; }
+            }, function (props) {
+              var turn = typeof props.turn === 'number' ? props.turn : props.turn && props.turn.turn;
+              var automaticState = React.useState({ items: [], token: '', error: '' }), automatic = automaticState[0], setAutomatic = automaticState[1];
+              React.useEffect(function () {
+                if (!props.sessionId || !Number.isSafeInteger(turn)) return;
+                var active = true;
+                function refresh() {
+                  fetch('/_dsh/user-memory/automatic?session=' + encodeURIComponent(props.sessionId) + '&turn=' + turn)
+                    .then(function (r) { return r.json(); }).then(function (r) { if (active && r.ok) setAutomatic({ items: r.items, token: r.token, error: '' }); }).catch(function () {});
+                }
+                refresh(); var later = setTimeout(refresh, 1500), last = setTimeout(refresh, 4000);
+                return function () { active = false; clearTimeout(later); clearTimeout(last); };
+              }, [props.sessionId, turn, props.turn]);
+              if (!Number.isSafeInteger(turn) || turn < 0) return null;
+              function undo(item) {
+                fetch('/_dsh/user-memory/automatic', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-User-Memory-Token': automatic.token }, body: JSON.stringify({ key: item.key, id: item.id }) })
+                  .then(function (r) { return r.json(); }).then(function (r) {
+                    if (!r.ok) throw new Error(r.error || '撤销未完成');
+                    setAutomatic(function (state) { return { items: state.items.filter(function (n) { return n.id !== item.id; }), token: state.token, error: '' }; });
+                  }).catch(function (e) { setAutomatic(function (state) { return { items: state.items, token: state.token, error: e.message }; }); });
+              }
+              return React.createElement('div', { style: { display: 'flex', gap: '12px', padding: '4px 0', fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } },
+                React.createElement('button', { type: 'button', onClick: function () { props.remember(turn); }, style: { font: 'inherit', color: 'inherit', border: 'none', background: 'transparent', cursor: 'pointer', padding: '4px 0' } }, '记住'),
+                automatic.items.map(function (item) { return React.createElement('span', { key: item.id, style: { display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } }, '已记住：' + item.value,
+                  React.createElement('button', { type: 'button', 'aria-label': '撤销记忆 ' + item.key, onClick: function () { undo(item); }, style: { font: 'inherit', color: 'inherit', border: 'none', background: 'transparent', cursor: 'pointer', padding: '4px 0' } }, '撤销')); }),
+                automatic.error ? React.createElement('span', { role: 'status' }, automatic.error) : null);
             });
           });
         });

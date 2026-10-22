@@ -7,6 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createMemoryActivity } from '../src/activity.ts';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -49,7 +50,7 @@ test('loop: agent calls memory_update through the real agent loop and persists',
         agent = (entry as { agent: Agent }).agent;
       }
     });
-    await ctx.plugin(ToolUserMemory, { path: file, maxBytes: 8192, includeInPrompt: true });
+    await ctx.plugin(ToolUserMemory, { path: file, maxBytes: 8192, includeInPrompt: true, memoryMode: 'shared', legacyTools: true, recordRequests: true });
     await ctx.plugin(AgentLoop, {
       agents: [{ id: 'loop-agent', provider: 'stub', model: 'stub-model' }],
     });
@@ -77,13 +78,22 @@ test('loop: agent calls memory_update through the real agent loop and persists',
     // Both model calls must have happened: tool-call turn + final-answer turn.
     const settled = await waitFor(() => adapter.calls >= streamBefore + 2, 10000);
     assert.ok(settled, 'loop completed the tool-call turn and the final-answer turn');
+    const activity = createMemoryActivity(file);
+    assert.ok(await waitFor(() => existsSync(activity.file), 10000), 'real LLM boundary produced a receipt');
+    const receipts = await activity.receipts();
+    assert.ok(receipts.records.length >= 2, 'each model request has its own receipt');
+    assert.ok(receipts.records.some(r => r.promptText.includes('zh-CN')), 'later request recorded the newly saved memory');
+    assert.ok(receipts.records.every(r => r.sessionId === agent!.session.id));
+    for await (const _chunk of ctx.llm.stream({ provider: 'stub', model: 'stub-model', sessionId: agent!.session.id,
+      signal: new AbortController().signal, messages: [{ id: 'background-title' as never, role: 'user', content: [{ type: 'text', text: 'Generate a title' }] }] })) { /* consume a non-loop helper call */ }
+    assert.equal((await activity.receipts()).records.length, receipts.records.length, 'background calls with the same session id do not create memory receipts');
   } finally {
     await disposeCtx(ctx);
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('loop: autoConsolidate runs a background pass at the turn boundary', async () => {
+test('loop: retired autoConsolidate flag does not run background consolidation', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-um-loop-cons-'));
   const file = join(dir, 'user.md');
   const logPath = join(dir, 'consolidation-log.md');
@@ -103,6 +113,7 @@ test('loop: autoConsolidate runs a background pass at the turn boundary', async 
       maxBytes: 8192,
       includeInPrompt: true,
       autoConsolidate: true,
+      memoryMode: 'shared', legacyTools: true,
       consolidateMinIntervalMs: 0,
       consolidationLogPath: logPath,
       workspaceBase: join(dir, 'ws'),
@@ -114,11 +125,10 @@ test('loop: autoConsolidate runs a background pass at the turn boundary', async 
     assert.ok(await waitFor(() => agent != null), 'config agent created');
     agent!.followup({ content: '请记住我的语言偏好：中文' } as never);
 
-    const logged = await waitFor(() => existsSync(logPath), 15000);
-    assert.ok(logged, 'the turn boundary triggered a background consolidation run');
-    const log = readFileSync(logPath, 'utf8');
-    assert.ok(log.startsWith('# Consolidation Log'));
-    assert.ok(log.includes('— turn'), 'the run is attributed to the turn boundary');
+    assert.ok(await waitFor(() => adapter.calls >= 2, 10000), 'normal model/tool turn completed');
+    await sleep(150);
+    assert.equal(existsSync(logPath), false, 'legacy automatic consolidation setting is inert');
+    assert.equal(adapter.calls, 2, 'no extra model call for consolidation');
   } finally {
     await disposeCtx(ctx);
     rmSync(dir, { recursive: true, force: true });

@@ -1,14 +1,7 @@
 /**
- * Model-facing tools:
- *   - `memory_get`    — read the user profile (global personal memory)
- *   - `memory_update` — record a stable preference (global, or workspace-scoped)
- *   - `memory_search` — keyword search across global + current workspace memory
- *   - `memory_topic`  — read one workspace memory topic in full
- *
- * Workspace-scoped calls resolve the session's workspace from the tool
- * execution's `agent` (set by the agent loop): `agent.session.header.cwd`.
- * Executions without an agent (diagnostics, tests) can only address the
- * global profile.
+ * Bounded project-note tools, resolved from the executing session cwd.
+ * Global preferences require opt-in sharing; missing cwd never falls back.
+ * Direct edits, migration and consolidation are legacy compatibility only.
  */
 
 import { defineTool } from '@deepseek-ai/dsh-tools';
@@ -22,6 +15,8 @@ import {
 import type { MemoryStore } from './store.ts';
 import { registerMigrationTools } from './migration-tools.ts';
 import { createCandidateStore } from './candidates.ts';
+import type { MemoryActivity } from './activity.ts';
+import { DEFAULT_POLICY, type MemoryPolicyStore } from './policy.ts';
 import {
   createWorkspaceMemory,
   searchTopics,
@@ -31,6 +26,9 @@ import {
 } from './workspace.ts';
 
 export interface MemoryToolsOptions {
+  policy?: MemoryPolicyStore;
+  legacyTools?: boolean;
+  activity?: MemoryActivity;
   /** Import rejects overflow instead of evicting existing memories. */
   maxBytes?: number;
   staleAfterDays?: number;
@@ -38,7 +36,7 @@ export interface MemoryToolsOptions {
   workspaceBase?: string;
   workspaceMode?: WorkspaceMode;
   projectPath?: string;
-  /** Background-consolidation entry point, supplied by the composition root. */
+  /** Legacy manual consolidation, supplied by the composition root. */
   consolidate?: ConsolidateRunner;
 }
 
@@ -61,7 +59,7 @@ function evictedOf(value: unknown): string[] {
 }
 
 const NO_WORKSPACE_ERROR =
-  'no workspace detected for this session (the session has no cwd, or it is inaccessible); use scope=global for personal memory';
+  '当前会话没有可用的项目目录；请在项目会话中使用便签，不会自动回退到共享偏好。';
 
 /** Resolve the executing session's workspace memory, or null when none. */
 async function workspaceFor(exec: { agent?: { session?: { header?: { cwd?: string } } } }, baseDir: string, options: MemoryToolsOptions): Promise<WorkspaceMemory | null> {
@@ -95,7 +93,10 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
   const workspaceBase = options.workspaceBase ?? '';
   const consolidate = options.consolidate;
   const profilePath = store.path();
-  registerMigrationTools(ctx, { profilePath, workspaceBase, maxBytes: options.maxBytes, workspaceMode: options.workspaceMode });
+  const usage = () => options.policy?.read() ?? DEFAULT_POLICY;
+  const blocked = () => usage().mode === 'paused';
+  const globalAllowed = () => usage().mode === 'shared';
+  if (options.legacyTools) registerMigrationTools(ctx, { profilePath, workspaceBase, maxBytes: options.maxBytes, workspaceMode: options.workspaceMode, allowed: globalAllowed });
 
   const candidates = createCandidateStore(profilePath);
   // Capture only live, direct human messages. Do not scan private session logs
@@ -113,7 +114,7 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
   });
   ctx.tools.register(defineTool({
     name: 'memory_propose',
-    description: 'Propose a durable memory or correction for human review in 管理记忆 → 待确认. Use for inferred facts, corrections, or when the user wants to review before saving. It is NOT saved as active memory and is NOT injected until the human confirms in the manager. Choose workspace for project facts, global only for cross-project preferences. Do not propose temporary requests. Source excerpts are checked against recently observed direct user messages by the host; a text match does not prove that your interpretation is correct. This tool cannot accept candidates.',
+    description: 'Propose a short project note ONLY when the user asks to save or correct durable information. Never infer a background obligation to remember conversations. The user must review it in 管理记忆 → 待确认; this tool cannot activate notes. Prefer workspace. global requires explicitly enabled shared preferences. Never save credentials or temporary requests. Source matching verifies quoted text, not its correctness.',
     parameters: {
       key: { type: 'string', required: true, description: 'Stable memory name; use the existing name for a correction so the manager can show the previous value.' },
       value: { type: 'string', required: true, description: 'Proposed durable content, at most 12000 characters.' },
@@ -124,6 +125,8 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
     output: { schema: { type: 'object', additionalProperties: true }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
     async execute(args: { key: string; value: string; scope: 'global' | 'workspace'; excerpt?: string; reason?: string }, exec: { agent?: { session?: { id?: string; header?: { id?: string; cwd?: string } } } }): Promise<Record<string, JsonValue>> {
       try {
+        if (blocked()) return { ok: false, error: '便签已暂停，模型不能读取或提出候选；可在管理页恢复。' };
+        if (args.scope === 'global' && !globalAllowed()) return { ok: false, error: '共享偏好未开启，请保存到当前项目；跨项目偏好须由用户在管理页明确开启。' };
         const ws = args.scope === 'workspace' ? await workspaceFor(exec, workspaceBase, options) : null;
         if (args.scope === 'workspace' && !ws) return { ok: false, error: NO_WORKSPACE_ERROR };
         const sid = exec.agent?.session?.id ?? exec.agent?.session?.header?.id;
@@ -141,31 +144,38 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
   ctx.tools.register(
     defineTool({
       name: 'memory_get',
-      description: [
-        'Read the user preference memory (persisted across sessions).',
-        'Call this when you need to personalise a response: preferred language,',
-        'communication style, project background, or any previously recorded preference.',
-        'Invalidated (superseded) entries are hidden by default; pass includeStale=true to audit them.',
-        `Profile file: ${profilePath}`,
-      ].join('\n'),
+      description: 'List saved notes for THIS session project when the user asks about earlier decisions or saved notes. Do not read on every turn. Returns titles and summaries; use memory_topic for full text. Current files and current user requests take precedence. Global preferences require explicit scope=global and user-enabled sharing.',
       parameters: {
+        scope: { type: 'string', enum: ['workspace', 'global'], description: 'workspace is the default; global requires enabled shared preferences' },
         query: { type: 'string', description: 'Optional keyword; filters entries by key or value' },
-        limit: { type: 'number', description: 'Max entries to return (default 50, max 100)' },
+        limit: { type: 'number', description: 'Project summaries: default 10, max 20. Explicit global scope: default 50, max 100.' },
         includeStale: {
           type: 'boolean',
           description:
-            'Also return invalidated entries (clearly marked); default false. Use for auditing what was superseded.',
+            'Compatibility only. Normal mode never returns invalidated notes, even if true.',
         },
       },
       output: {
         schema: { type: 'object', additionalProperties: true },
-        render: (_args, value) => [{ type: 'text', text: fieldOf(value, 'rendered') }],
+        render: (_args, value) => [{ type: 'text', text: isOk(value) ? fieldOf(value, 'rendered') : `便签读取失败：${fieldOf(value, 'error')}` }],
       },
       async execute(args: {
+        scope?: 'workspace' | 'global';
         query?: string;
         limit?: number;
         includeStale?: boolean;
-      }): Promise<Record<string, JsonValue>> {
+      }, exec: { agent?: { session?: { id?: string; header?: { cwd?: string } } } }): Promise<Record<string, JsonValue>> {
+        if (blocked()) return { ok: false, error: '便签已暂停。' };
+        const target = args.scope ?? (options.legacyTools ? 'global' : 'workspace');
+        if (target === 'workspace') {
+          const ws = await workspaceFor(exec, workspaceBase, options);
+          if (!ws) return { ok: false, error: NO_WORKSPACE_ERROR };
+          const query = (args.query ?? '').trim().toLowerCase();
+          const topics = (await ws.list()).filter(t => !t.invalidatedAt && (!query || (t.topic + '\n' + t.body).toLowerCase().includes(query)));
+          const slice = topics.slice(0, Math.max(0, Math.min(args.limit ?? 10, 20)));
+          return { ok: true, scope: 'workspace', total: topics.length, rendered: slice.map(t => `## ${t.topic}\n${t.body.split(/\r?\n/).find(l => l.trim())?.slice(0, 240) ?? ''}`).join('\n\n') || '(no saved project notes)' };
+        }
+        if (!globalAllowed()) return { ok: false, error: '共享偏好未开启。' };
         const entries = await store.list();
         const query = (args.query ?? '').trim().toLowerCase();
         const matches = (entry: { key: string; value: string }): boolean =>
@@ -174,11 +184,12 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
           entry.value.toLowerCase().includes(query);
         const valid = entries.filter((entry) => !entry.invalidatedAt && matches(entry));
         const invalidated = entries.filter((entry) => entry.invalidatedAt && matches(entry));
-        const combined = (args.includeStale ? [...valid, ...invalidated] : valid).sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned));
+        const combined = (options.legacyTools && args.includeStale ? [...valid, ...invalidated] : valid).sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned));
         const limit = Math.max(0, Math.min(args.limit ?? 50, 100));
         const slice = combined.slice(0, limit);
         const opts: RenderOptions = { now: new Date().toISOString(), staleAfterDays };
         const body = renderEntries(slice, opts);
+        for (const entry of slice) options.activity?.read(exec.agent?.session?.id, 'global', entry.key, renderEntries([entry], opts));
         // Canonical value stays scalar + rendered text; the model sees `rendered`.
         return {
           ok: true,
@@ -190,7 +201,7 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
     }),
   );
 
-  ctx.tools.register(
+  if (options.legacyTools) ctx.tools.register(
     defineTool({
       name: 'memory_update',
       description: [
@@ -266,9 +277,11 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
           reason?: string;
           scope?: 'global' | 'workspace';
         },
-        exec: { agent?: { session?: { header?: { cwd?: string } } } },
+        exec: { agent?: { session?: { id?: string; header?: { cwd?: string } } } },
       ): Promise<Record<string, JsonValue>> {
         const mode = args.mode ?? 'set';
+        if (blocked()) return { ok: false, error: '便签已暂停。' };
+        if (args.scope !== 'workspace' && !globalAllowed()) return { ok: false, error: '共享偏好未开启。' };
         if (args.scope === 'workspace') {
           const ws = await workspaceFor(exec, workspaceBase, options);
           if (ws === null) {
@@ -309,8 +322,8 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
     defineTool({
       name: 'memory_search',
       description: [
-        'Search user memory by keyword: the global personal profile plus this',
-        'session\'s workspace memory. Returns ranked hits with one-line snippets.',
+        'Search saved notes for this exact session project when earlier decisions are relevant.',
+        'Shared preferences participate only when the user enabled them. Do not search routinely.',
         'Use memory_topic to read a workspace topic in full.',
       ].join('\n'),
       parameters: {
@@ -318,7 +331,7 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
         limit: { type: 'number', description: 'Max results (default 10, max 20)' },
         includeStale: {
           type: 'boolean',
-          description: 'Also search invalidated entries (marked); default false',
+          description: 'Compatibility only. Normal mode always hides invalidated notes.',
         },
       },
       output: {
@@ -329,10 +342,11 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
         args: { query?: string; limit?: number; includeStale?: boolean },
         exec: { agent?: { session?: { header?: { cwd?: string } } } },
       ): Promise<Record<string, JsonValue>> {
+        if (blocked()) return { ok: false, error: '便签已暂停。' };
         const query = (args.query ?? '').trim();
         const limit = Math.max(0, Math.min(args.limit ?? 10, 20));
-        const includeStale = args.includeStale === true;
-        const entries = await store.list();
+        const includeStale = options.legacyTools === true && args.includeStale === true;
+        const entries = globalAllowed() ? await store.list() : [];
         const globalTopics = entries.map((entry) => ({
           topic: entry.key,
           body: entry.value,
@@ -342,6 +356,7 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
         }));
         const ws = await workspaceFor(exec, workspaceBase, options);
         const wsTopics = ws === null ? [] : await ws.list();
+        if (!ws && !globalAllowed()) return { ok: false, error: NO_WORKSPACE_ERROR };
         const gHits = searchTopics(globalTopics, query, includeStale).map((h) => ({ ...h, scope: 'global' }));
         const wHits = searchTopics(wsTopics, query, includeStale).map((h) => ({ ...h, scope: 'workspace' }));
         const merged = [...gHits, ...wHits].sort(
@@ -391,14 +406,17 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
       },
       async execute(
         args: { topic: string },
-        exec: { agent?: { session?: { header?: { cwd?: string } } } },
+        exec: { agent?: { session?: { id?: string; header?: { cwd?: string } } } },
       ): Promise<Record<string, JsonValue>> {
+        if (blocked()) return { ok: false, error: '便签已暂停。' };
         const ws = await workspaceFor(exec, workspaceBase, options);
         if (ws === null) return { ok: false, topic: args.topic, error: NO_WORKSPACE_ERROR };
         const topic = await ws.read(args.topic);
         if (topic === undefined) {
           return { ok: false, topic: args.topic, error: `topic '${args.topic}' not found in this workspace` };
         }
+        if (topic.invalidatedAt && !options.legacyTools) return { ok: false, topic: topic.topic, error: '这条便签已停用，请由用户在管理页核对。' };
+        options.activity?.read(exec.agent?.session?.id, 'workspace', topic.topic, topic.body);
         return {
           ok: true,
           topic: topic.topic,
@@ -411,7 +429,7 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
     }),
   );
 
-  ctx.tools.register(
+  if (options.legacyTools) ctx.tools.register(
     defineTool({
       name: 'memory_consolidate',
       description: [
@@ -419,9 +437,7 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
         'relative dates to a real date, and retire facts that stopped being true.',
         'mode=plan (default) only reports what would change; mode=apply performs it',
         'and appends an auditable record to the consolidation log.',
-        'The plugin can also run this automatically in the background when',
-        'autoConsolidate is enabled; call it manually after a long session, or when',
-        'the memory feels stale or contradictory.',
+        'Compatibility only. Automatic consolidation is retired.',
       ].join('\n'),
       parameters: {
         mode: {
@@ -443,6 +459,7 @@ export function registerMemoryTools(ctx: Context, store: MemoryStore, options: M
         args: { mode?: 'plan' | 'apply'; useModel?: boolean },
         exec: { agent?: { session?: { header?: { cwd?: string } } } },
       ): Promise<Record<string, JsonValue>> {
+        if (!globalAllowed()) return { ok: false, error: '整理兼容工具要求用户明确开启共享偏好，暂停时不可用。' };
         if (consolidate === undefined) {
           return { ok: false, error: 'consolidation is not wired in this instance' };
         }

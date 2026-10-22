@@ -27,11 +27,26 @@ function send(res: ServerResponse, code: number, body: unknown, html = false, no
     'Content-Security-Policy': html ? `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self' blob:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'` : "default-src 'none'; frame-ancestors 'none'" });
   res.end(html ? body as string : JSON.stringify(body));
 }
-export function managerHandlers(options: ManagerOptions = {}): { page: Handler; api: Handler } {
+export function managerHandlers(options: ManagerOptions = {}): { page: Handler; api: Handler; automatic: Handler } {
   const manager = createMemoryManager(options);
   const token = randomBytes(32).toString('hex');
   const nonce = randomBytes(20).toString('hex');
   return {
+    async automatic(req, res) {
+      if (!localRequest(req)) { send(res, 403, { ok: false, error: '仅允许本机同源访问' }); return; }
+      try {
+        if (req.method === 'GET') {
+          const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+          const items = await manager.action({ action: 'automatic-notices', sessionId: params.get('session') ?? '', turn: Number(params.get('turn')) });
+          send(res, 200, { ok: true, items, token }); return;
+        }
+        if (req.method !== 'POST') { send(res, 405, { ok: false }); return; }
+        if (req.headers['x-user-memory-token'] !== token || String(req.headers['content-type']).split(';')[0] !== 'application/json') { send(res, 403, { ok: false }); return; }
+        let body = ''; for await (const part of req) { body += part.toString(); if (Buffer.byteLength(body) > 4096) throw new Error('请求过大'); }
+        const input = JSON.parse(body), result = await manager.action({ action: 'undo-automatic', key: input.key, id: input.id });
+        send(res, 200, { ok: true, result });
+      } catch (e) { send(res, 400, { ok: false, error: (e as Error).message }); }
+    },
     async page(req, res) {
       if (!localRequest(req)) { send(res, 403, { ok: false, error: '管理页仅允许本机同源访问' }); return; }
       if (req.method !== 'GET') { send(res, 405, { ok: false, error: '需要 GET' }); return; }
@@ -64,6 +79,7 @@ export function installManagerWeb(ctx: Context, options: ManagerOptions): void {
     const handlers = managerHandlers(options);
     child.effect(() => web.register({ kind: 'exact', path: MANAGER_ROUTE, handler: handlers.page }));
     child.effect(() => web.register({ kind: 'exact', path: `${MANAGER_ROUTE}/api`, handler: handlers.api }));
+    child.effect(() => web.register({ kind: 'exact', path: `${MANAGER_ROUTE}/automatic`, handler: handlers.automatic }));
   });
 }
 export async function startManagerServer(options: ManagerOptions = {}, port = 0) {
@@ -71,7 +87,7 @@ export async function startManagerServer(options: ManagerOptions = {}, port = 0)
   const handlers = managerHandlers(options);
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
-    const handler = url.pathname === MANAGER_ROUTE ? handlers.page : url.pathname === `${MANAGER_ROUTE}/api` ? handlers.api : null;
+    const handler = url.pathname === MANAGER_ROUTE ? handlers.page : url.pathname === `${MANAGER_ROUTE}/api` ? handlers.api : url.pathname === `${MANAGER_ROUTE}/automatic` ? handlers.automatic : null;
     if (!handler) { send(res, 404, { ok: false, error: '页面不存在' }); return; }
     void handler(req, res).catch(() => { if (!res.headersSent) send(res, 500, { ok: false, error: '请求失败' }); else res.end(); });
   });

@@ -1,110 +1,64 @@
 # dsh-tool-user-memory
 
-[![npm](https://img.shields.io/npm/v/dsh-tool-user-memory)](https://www.npmjs.com/package/dsh-tool-user-memory) [![CI](https://github.com/IAMLieutenant/dsh-tool-user-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/IAMLieutenant/dsh-tool-user-memory/actions/workflows/ci.yml) [![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![npm][npm-badge]][npm] [![CI][ci-badge]][ci] [![MIT][license-badge]][license]
 
-**Start a new session without explaining everything again.**
+A user memory plugin for DeepSeek Harness. It saves personal background and preferences so new conversations can use them too.
 
-Save preferences, project conventions, and confirmed facts for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): your preferred language, a rollback requirement, or the database a project now uses. The assistant can refer to them in later relevant sessions.
+[中文说明][chinese] · [Download 0.4.2][release] · [Changelog][changelog]
 
-Browse and edit memories inside DSH. They live in local Markdown files and can be exported when you change computers. This is an independently maintained community plugin.
+## Features
 
-[中文](README.md) · [Installation](#installation) · [Usage reference](docs/reference.en.md) · [Changelog](CHANGELOG.md)
+Tell the assistant about yourself as you normally would, such as your professional background or preferred language. Clear personal information can be saved automatically, with a short notice and an Undo button below the answer.
 
-**`0.4.1`: review before remembering.** This release adds pending memories, source checks, and correction previews. See the [release notes](https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.4.1).
+The manager lets you search, add, edit and delete memories. A single switch turns memory on or off.
 
-![Pending memories inside DSH, shown with Chinese UI and example data](docs/images/pending-memories.png)
+You can review suggestions before saving them in the pending list. Export and import let you back up your data or move it to another computer.
 
-## What changed in 0.4.1
+![Memory manager][memory-image]
 
-There is a new **review before saving** workflow.
+## Install
 
-Suppose a project used MySQL and you tell the assistant it has moved to PostgreSQL. The assistant can propose an update first. You check its interpretation and destination, then decide whether to save it.
-
-| What you can do | What changed |
-|---|---|
-| Review a suggestion first | Pending suggestions do not enter active memory until confirmed. Dismiss the ones you do not want. |
-| Inspect its source | A suggestion can include a session and quoted excerpt. Only excerpts matched against recently observed direct user messages receive a matched label. A text match does not prove the interpretation is correct. |
-| Choose where it belongs | Keep general preferences in user memory and project facts in the source project. Project memory is not supplied to other projects. |
-| Correct an existing fact | Reuse its name to compare the old and proposed content. Once confirmed, normal reads use the new content; history retains the old text. |
-
-![Comparing existing and proposed memory before confirmation](docs/images/candidate-review-light.png)
-
-This is an additional workflow. Direct saving remains available, and the plugin does not automatically turn every conversation into suggestions.
-
-## Try it in a minute
-
-1. In a DSH session with a project directory, ask:
-
-   > Use memory_propose to propose a memory: this project has migrated to PostgreSQL, so future SQL examples should use PostgreSQL syntax. Use workspace scope; do not save it directly yet.
-
-2. Open **Plugins → dsh-tool-user-memory → 管理记忆 → 待确认**.
-3. Choose **核对并保存**, then check the content, source, and scope. Edit the content if needed.
-4. Select **预览变更** to preview the change, then **确认保存** to save. You can cancel or dismiss it instead.
-5. Start a fresh session in the same project and ask the assistant to check the saved database convention.
-
-To try a correction, first create a project memory with the same name and the content “This project uses MySQL.” The review then shows the old and new values.
-
-For an explicit direct save, you can still ask the assistant to use `memory_update` to remember a stable preference.
-
-## Keep different kinds of memory separate
-
-- **User memory:** language, communication style, and other preferences shared across projects.
-- **Project memory:** technical choices, conventions, and background for one project.
-- **Pending review:** inactive suggestions waiting for your decision.
-- **Migration:** export, map projects, preview, import, and undo an import if necessary.
-
-Pin important user memories to give them display, retention, and prompt priority. A length budget still limits how much can reach the model at once.
-
-The manager follows DSH colors and fonts in light and dark modes. Confirmation actions stay at the bottom of the dialog, including in narrow windows.
-
-![Memory review following DSH dark mode](docs/images/candidate-review-dark.png)
-
-## Installation
-
-### Published stable release
-
-With DSH installed:
+Install DeepSeek Harness first, then download `dsh-tool-user-memory-0.4.2.tgz` from the [0.4.2 release][release]. Run this command in your download folder and restart DSH afterwards.
 
 ```sh
-dsh plugin --profile web add dsh-tool-user-memory@0.4.1
+dsh plugin --profile web add ./dsh-tool-user-memory-0.4.2.tgz
 ```
 
-Version `0.4.1` includes the review workflow described above, alongside management, pins, project isolation, and migration.
+The example uses the `web` profile. Replace it with your profile name if needed.
 
-### Build from source
+## Use
 
-From the repository root:
+Open Plugins in DSH, find this plugin and click 管理记忆. Saved memories appear in the list, and 新增记忆 adds one manually.
+
+You do not need to explicitly ask the assistant to remember every personal fact. Clear background, skill familiarity, language and communication preferences can be saved automatically, and the Undo button removes a mistaken addition.
+
+When enabled, saved memories are included in later conversations. Pending suggestions take effect after you save them, and replacements show the old and new content before confirmation.
+
+## What gets saved
+
+Only information about you belongs in automatic memory. Project settings, coding constraints, release procedures and temporary requests are skipped, as are unclear statements.
+
+Data is stored locally and sent to your configured model provider when used. Turning memory off or deleting it affects future reads, while existing conversations and backups remain.
+
+## Build from source
+
+Clone the repository, install dependencies and build the plugin. Replace the installation path with your checkout's absolute path.
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm run build
-pnpm pack
-dsh plugin --profile web add ./dsh-tool-user-memory-0.4.1.tgz
+dsh plugin --profile web add "link:/absolute/path/dsh-tool-user-memory"
 ```
 
-Replace `web` with your actual profile. Restart DSH after installation or an upgrade; refreshing the browser alone does not reload the host plugin.
+Windows paths can use forward slashes, such as `D:/projects/dsh-tool-user-memory`. Restart DSH after rebuilding.
 
-Version `0.4.1` puts **管理记忆** directly on its plugin detail page. Version `0.4.0` may require opening the component configuration first.
-
-Existing memories remain readable. Version `0.4.1` adds provenance metadata: keep a pre-upgrade backup before downgrading and do not rewrite newer data with an older CLI.
-
-## Before you use it
-
-- Saving a memory, supplying it to the model, and the model actually following it are separate outcomes. Check both stored content and the resulting answer.
-- Local storage does not mean offline model processing. Relevant memory is sent to the configured model service with the request; do not store credentials.
-- Removing active memory can leave history and backup copies. See the reference for recovery and complete removal.
-- Retrieval currently uses keywords. Semantic search, automatic extraction of all past conversations, and encrypted synchronization are not implemented.
-
-## Further reading
-
-| Document | What it covers |
-|---|---|
-| [Usage and configuration](docs/reference.en.md) | Pins, migration, capacity, tool parameters, storage, and troubleshooting |
-| [Candidate review](docs/candidate-review.md) | Source matching, corrections, and recovery; Chinese |
-| [Development and verification](docs/development.md) | Build commands, test results, and browser validation; Chinese |
-| [Changelog](CHANGELOG.md) | Changes by version |
-| [Roadmap](ROADMAP.md) | Planned work |
-
-Version `0.4.1` passes **139 automated tests and the build**. A separate DSH `0.2.1-rc.2` web instance verified the actual manager entry, review workflow, theme changes, and narrow layout. Screenshots use example data; long-term behavior with real models still needs evaluation.
-
-Questions and suggestions are welcome in [Issues](https://github.com/IAMLieutenant/dsh-tool-user-memory/issues). Licensed under [MIT](LICENSE).
+[npm-badge]: https://img.shields.io/npm/v/dsh-tool-user-memory
+[npm]: https://www.npmjs.com/package/dsh-tool-user-memory
+[ci-badge]: https://github.com/IAMLieutenant/dsh-tool-user-memory/actions/workflows/ci.yml/badge.svg
+[ci]: https://github.com/IAMLieutenant/dsh-tool-user-memory/actions/workflows/ci.yml
+[license-badge]: https://img.shields.io/badge/license-MIT-blue
+[license]: LICENSE
+[chinese]: README.md
+[release]: https://github.com/IAMLieutenant/dsh-tool-user-memory/releases/tag/v0.4.2
+[changelog]: CHANGELOG.md
+[memory-image]: docs/images/user-memory-list.png

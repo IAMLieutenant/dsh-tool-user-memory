@@ -6,13 +6,20 @@ import { parseProfile, RESERVED_KEYS, validateKey, renderEntriesBudgeted } from 
 import { createStoredWorkspaceMemory, createWorkspaceMemory, normalizeTopic, parseTopicFile, TOPIC_MAX_BYTES, buildIndexText, type WorkspaceMode } from './workspace.ts';
 import { exportMemoryBundle, parseMemoryBundle, previewMemoryBundle, applyMemoryBundle, rollbackMemoryImport, type MigrationOptions, type ImportOptions } from './migration.ts';
 import { atomicMemoryWrite, documentHash, readMemoryDocument, listHistory, restoreHistory, listArchives } from './history.ts';
-import { memoryPromptPreview } from './prompt.ts';
+import { memoryPromptSnapshot } from './prompt.ts';
 import { withDocumentLock } from './lock.ts';
 import { createCandidateStore, type MemoryCandidate } from './candidates.ts';
 import type { MemoryProvenance } from './provenance.ts';
 import { workspaceHashOf } from './workspace.ts';
+import { sourceWorkspace, type MemoryActivity } from './activity.ts';
+import { createMemoryPolicy, type MemoryPolicyStore } from './policy.ts';
+import { createAutomaticMemory } from './auto-memory.ts';
 
 export interface ManagerOptions extends MigrationOptions {
+  /** False is reserved for old integrations/tests; normal UI handles user memory only. */
+  userOnly?: boolean;
+  usagePolicy?: MemoryPolicyStore;
+  activity?: MemoryActivity;
   projectPath?: string;
   promptMaxBytes?: number;
   workspacePromptMaxBytes?: number;
@@ -23,13 +30,16 @@ function text(value: unknown, name: string): string { if (typeof value !== 'stri
 function object(value: unknown): Record<string, unknown> { if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('请求格式无效'); return value as Record<string, unknown>; }
 
 export function createMemoryManager(options: ManagerOptions = {}) {
+  const userOnly = options.userOnly !== false;
   const profile = path.resolve(options.profilePath || dshHomePath('user-memory', 'user.md'));
   const base = path.resolve(options.workspaceBase || dshHomePath('user-memory', 'workspace'));
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   if (!Number.isInteger(maxBytes) || maxBytes <= 0 || maxBytes > 16 * 1024 * 1024) throw new Error('画像容量必须是 1 到 16 MiB 之间的整数');
   const store = createMemoryStore({ path: profile, maxBytes });
   const candidates = createCandidateStore(profile);
+  const policy = options.usagePolicy ?? createMemoryPolicy(profile, userOnly ? { mode: options.includeInPrompt === false ? 'paused' : 'shared', inject: options.includeInPrompt !== false } : { inject: options.includeInPrompt === true }, userOnly);
   const migration = { profilePath: profile, workspaceBase: base, maxBytes, workspaceMode: options.workspaceMode };
+  const automatic = createAutomaticMemory(store, policy);
   async function project(id: string) {
     if (!/^[a-f0-9]{16}$/.test(id)) throw new Error('项目 ID 无效');
     const dir = path.join(base, id);
@@ -40,6 +50,7 @@ export function createMemoryManager(options: ManagerOptions = {}) {
   }
   async function target(input: Record<string, unknown>) {
     if (input.scope === 'global') return { file: profile, lock: `${profile}.lock`, max: maxBytes, ws: null };
+    if (userOnly) throw new Error('这里只保存用户记忆。');
     if (input.scope !== 'workspace') throw new Error('记忆范围无效');
     const ws = await project(text(input.projectId, '项目 ID'));
     const key = text(input.key, '主题'); const checked = normalizeTopic(key);
@@ -48,9 +59,10 @@ export function createMemoryManager(options: ManagerOptions = {}) {
     return { file: path.join(ws.dir, `${old?.topic ?? checked.topic}.md`), lock: path.join(ws.dir, '.lock'), max: TOPIC_MAX_BYTES + 2048, ws };
   }
   async function snapshot(projectId = '') {
-    const bundle = await exportMemoryBundle(migration);
-    const pending = (await candidates.list()).filter(c => c.status === 'pending');
-    const ws = projectId ? await project(projectId) : null;
+    const settings = policy.snapshot();
+    const bundle = userOnly ? { profile: await store.list(), projects: [] } : await exportMemoryBundle(migration);
+    const pending = (await candidates.list()).filter(c => c.status === 'pending' && (!userOnly || c.scope === 'global'));
+    const ws = !userOnly && projectId ? await project(projectId) : null;
     const { entries, revision } = await withDocumentLock(ws ? path.join(ws.dir, '.lock') : `${profile}.lock`, async () => {
       const doc = await readMemoryDocument(profile);
       const revision = documentHash(doc);
@@ -62,17 +74,19 @@ export function createMemoryManager(options: ManagerOptions = {}) {
     const archives = await listArchives(profile);
     const active = (await store.list()).filter(e => !e.invalidatedAt);
     const budgeted = renderEntriesBudgeted(active, options.promptMaxBytes ?? 2048);
-    return { entries, revision,
+    return { entries, revision, settings, enabled: settings.values.mode === 'shared' && settings.values.inject,
       candidates: pending.map(c => ({ ...c, revision: documentHash(JSON.stringify(c)), projectId: c.workspacePath ? workspaceHashOf(c.workspacePath) : '' })),
       projects: bundle.projects.map(p => ({ id: p.id, sourcePath: p.sourcePath, topics: p.topics.length })),
       stats: { profileEntries: bundle.profile.length, projectTopics: bundle.projects.reduce((n, p) => n + p.topics.length, 0),
         activeBytes: Buffer.byteLength(await store.read()), maxBytes, archivedEntries: archives.reduce((n, a) => n + a.entries.length, 0),
-        promptOmitted: options.includeInPrompt === false ? active.length : options.promptMaxBytes === 0 ? 0 : budgeted.omitted },
+        promptOmitted: !settings.values.inject || settings.values.mode !== 'shared' ? active.length : options.promptMaxBytes === 0 ? 0 : budgeted.omitted },
       paths: { profile, workspaceBase: base }, workspaceMode: options.workspaceMode ?? 'directory',
-      promptPreview: options.includeInPrompt === false ? '' : memoryPromptPreview(store, ws?.path || options.projectPath, options.promptMaxBytes ?? 2048,
-        options.staleAfterDays ?? 0, options.workspacePromptMaxBytes ?? 512, base, options.workspaceMode, options.projectPath) };
+      promptPreview: memoryPromptSnapshot(store, userOnly ? undefined : ws?.path || options.projectPath, options.promptMaxBytes ?? 2048,
+        options.staleAfterDays ?? 0, userOnly ? 0 : options.workspacePromptMaxBytes ?? 512, base, options.workspaceMode, userOnly ? '' : options.projectPath,
+        settings.values.inject && settings.values.mode !== 'paused', settings.values.mode === 'shared').text };
   }
   async function candidateTarget(c: MemoryCandidate, input: Record<string, unknown>) {
+    if (userOnly && (c.scope !== 'global' || input.scope !== 'global')) throw new Error('这里只保存用户记忆，不转换旧项目记忆。');
     const key = text(input.key, '名称').trim(), value = text(input.value, '内容');
     if (validateKey(key) || RESERVED_KEYS.has(key) || !value.trim() || value.length > 12000) throw new Error('请填写有效的名称和内容');
     if (input.scope === 'global') return { file: profile, key, value, ws: null };
@@ -93,6 +107,40 @@ export function createMemoryManager(options: ManagerOptions = {}) {
   async function action(raw: unknown): Promise<unknown> {
     const input = object(raw); const action = text(input.action, '操作');
     if (action === 'snapshot') return snapshot(typeof input.projectId === 'string' ? input.projectId : '');
+    if (action === 'automatic-notices') {
+      if (!Number.isSafeInteger(input.turn) || (input.turn as number) < 0) throw new Error('轮次无效');
+      return automatic.notices(text(input.sessionId, '会话'), input.turn as number);
+    }
+    if (action === 'undo-automatic') return automatic.undo(text(input.key, '记忆'), text(input.id, '记录'));
+    if (action === 'set-enabled') {
+      if (typeof input.enabled !== 'boolean') throw new Error('开关值无效');
+      return policy.save({ mode: input.enabled ? 'shared' : 'paused', inject: input.enabled, diagnostics: false }, text(input.revision, '使用设置版本'));
+    }
+    if (action === 'save-settings') { if (userOnly) throw new Error('请使用记忆启用开关。'); return policy.save(input.values, text(input.revision, '使用设置版本')); }
+    if (action === 'receipts') {
+      if (input.turn !== undefined && (!Number.isSafeInteger(input.turn) || (input.turn as number) < 0)) throw new Error('轮次无效');
+      return options.activity ? options.activity.receipts(typeof input.sessionId === 'string' ? input.sessionId : undefined, input.turn as number | undefined) : { records: [], warning: '当前独立管理服务没有接入运行中的会话记录。' };
+    }
+    if (action === 'clear-receipts') { if (!options.activity) throw new Error('当前没有会话记录服务'); await options.activity.clear(); return { cleared: true }; }
+    if (action === 'source-messages') {
+      if (!options.activity) throw new Error('请从运行中的 DSH 消息下方打开“记住”');
+      if (!Number.isSafeInteger(input.turn) || (input.turn as number) < 0) throw new Error('轮次无效');
+      return { messages: options.activity.messages(text(input.sessionId, '会话'), input.turn as number).map(m => ({ ...m, hasWorkspace: !!(m.cwd || options.projectPath) })) };
+    }
+    if (action === 'propose-message') {
+      if (!options.activity) throw new Error('当前没有会话记录服务');
+      const sid = text(input.sessionId, '来源会话'), excerpt = text(input.excerpt, '原话');
+      if (!Number.isSafeInteger(input.seq) || (input.seq as number) < 0) throw new Error('消息位置无效');
+      const source = options.activity.source(sid, input.seq as number, excerpt);
+      if (userOnly && input.scope !== undefined && input.scope !== 'global') throw new Error('这里只保存用户记忆。');
+      if (!userOnly && !['global', 'workspace'].includes(String(input.scope))) throw new Error('请选择保存范围');
+      const workspacePath = userOnly ? undefined : sourceWorkspace(source.cwd, options.workspaceMode, options.projectPath);
+      if (input.scope === 'workspace' && !workspacePath) throw new Error('来源会话没有项目目录，请选择用户记忆');
+      const c = await candidates.propose({ key: text(input.key, '名称').trim(), value: text(input.value, '内容'), scope: userOnly ? 'global' : input.scope as 'global' | 'workspace',
+        ...(workspacePath ? { workspacePath } : {}), sourceSessionId: sid, sourceEventSeq: source.message.seq,
+        sourceRole: source.message.role, excerptVerified: true, excerpt, reason: '用户从消息操作中选取，等待核对保存' });
+      return { candidate: { ...c, revision: documentHash(JSON.stringify(c)), projectId: workspacePath ? workspaceHashOf(workspacePath) : '' } };
+    }
     if (action === 'preview-candidate') {
       const c = (await candidates.list()).find(c => c.id === input.id && c.status === 'pending');
       if (!c || documentHash(JSON.stringify(c)) !== input.revision) throw new Error('候选已变化或已处理，请刷新');
@@ -116,6 +164,7 @@ export function createMemoryManager(options: ManagerOptions = {}) {
           confirmedAt: now, method: 'candidate', candidateId: c.id,
           ...(c.sourceSessionId ? { sourceSessionId: c.sourceSessionId } : {}), ...(c.excerpt ? { excerpt: c.excerpt } : {}),
           ...(c.excerptVerified !== undefined ? { excerptVerified: c.excerptVerified } : {}), ...(c.sourceEventSeq !== undefined ? { sourceEventSeq: c.sourceEventSeq } : {}),
+          ...(c.sourceRole ? { sourceRole: c.sourceRole } : {}),
           ...(p.before && p.before.length <= 16384 ? { previousValue: p.before } : {}) };
         const result = p.t.ws
           ? await p.t.ws.write(p.t.key, p.t.value, 'set', '', await p.t.ws.read(p.t.key) ?? null, undefined, p.revision, provenance)
@@ -187,14 +236,14 @@ export function createMemoryManager(options: ManagerOptions = {}) {
     const result = await store.update(key, value, mode as 'set', reason, { expected: current, expectedDocumentHash: revision }, input.pinned as boolean | undefined, mode === 'set' || mode === 'append' ? provenance : undefined);
     if (!result.ok) throw new Error(result.error); return result;
   }
-  async function diagnose(cwd?: string) {
+  async function diagnose(cwd?: string, currentProjectOnly = false) {
     let workspace: unknown = null; let workspaceError = '';
     const projectCwd = options.projectPath || cwd;
-    if (projectCwd) try { const ws = await createWorkspaceMemory({ cwd: projectCwd, baseDir: base, mode: options.workspaceMode, projectPath: options.projectPath }); workspace = { path: ws.path, storage: ws.dir, topics: (await ws.list()).length }; }
+    if (!userOnly && projectCwd) try { const ws = await createWorkspaceMemory({ cwd: projectCwd, baseDir: base, mode: options.workspaceMode, projectPath: options.projectPath }); workspace = { path: ws.path, storage: ws.dir, topics: (await ws.list()).length }; }
       catch (error) { workspaceError = (error as Error).message; }
-    const state = await snapshot();
+    const state = currentProjectOnly ? { stats: {} } : await snapshot();
     return { profile, workspaceBase: base, workspace, workspaceError, ...state.stats,
-      includeInPrompt: options.includeInPrompt !== false, workspaceMode: options.workspaceMode ?? 'directory',
+      policy: policy.snapshot(), includeInPrompt: policy.read().inject && policy.read().mode !== 'paused', workspaceMode: options.workspaceMode ?? 'directory',
       note: 'CLI 诊断读取指定文件与选项；插件工具诊断使用运行中的插件配置。此结果不代表模型一定会采用记忆。' };
   }
   return { action, snapshot, diagnose };

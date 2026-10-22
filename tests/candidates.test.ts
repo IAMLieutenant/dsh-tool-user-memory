@@ -13,7 +13,7 @@ import { listHistory } from '../src/history.ts';
 
 async function fixture(maxBytes = 8192) {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-candidate-'));
-  const options = { profilePath: join(dir, 'user.md'), workspaceBase: join(dir, 'workspaces'), maxBytes };
+  const options = { profilePath: join(dir, 'user.md'), workspaceBase: join(dir, 'workspaces'), maxBytes, userOnly: false };
   const store = createMemoryStore({ path: options.profilePath, maxBytes });
   return { dir, options, store, manager: createMemoryManager(options), candidates: createCandidateStore(options.profilePath),
     cleanup: () => rm(dir, { recursive: true, force: true }) };

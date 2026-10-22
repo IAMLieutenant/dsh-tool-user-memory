@@ -1,6 +1,6 @@
 # Usage and configuration reference
 
-Back to the [README](../README.en.md). This page describes `0.4.1`. See [candidate review](candidate-review.md) for the review workflow.
+Back to the [README](../README.en.md). **Historical reference for published `0.4.1`.** The local version stores confirmed user preferences only; its [final design](final-design.md) takes precedence. Project tools, pinning, automatic consolidation and old settings below are historical compatibility behavior, not the current normal workflow. See [candidate review](candidate-review.md) for the old review workflow.
 
 Standalone examples use this checkout's built `node lib/migrate-cli.js`. Run `pnpm install --frozen-lockfile` and `pnpm run build` in the repository root first. Use the matching CLI for 0.4.1 data: the older 0.4.0 CLI does not preserve the new provenance fields.
 

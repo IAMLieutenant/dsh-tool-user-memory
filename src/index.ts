@@ -1,23 +1,13 @@
 /**
- * dsh-tool-user-memory — user preference memory for DeepSeek Harness.
- *
- * A Cordis plugin that gives the agent a persisted, cross-session memory of
- * user preferences:
- *   - `memory_get` / `memory_update` / `memory_search` / `memory_topic` /
- *     `memory_consolidate` model-facing tools
- *   - a `{{user_profile}}` system-prompt variable injected every turn
- *   - a per-workspace memory layer (regenerable index + topic files)
- *     under $DSH_HOME, resolved from the session's cwd
- *   - background consolidation ("dreaming") at turn boundaries plus a manual
- *     tool, with an auditable consolidation log
- *
- * The profile lives in a single Markdown file under $DSH_HOME (global,
- * human-readable, deletable = forgetting).
+ * Confirmed user preferences for DeepSeek Harness, carried into future chats.
+ * Normal runtime has no project memory, conversation memory or background writes.
+ * Old project files are preserved for backup/migration; never promoted to profile.
  */
 
 import z from '@deepseek-ai/schemastery';
+import { createMemoryActivity, installMemoryActivity } from './activity.ts';
+import { createMemoryPolicy } from './policy.ts';
 import type { Context } from '@deepseek-ai/cordis';
-import type { Agent } from '@deepseek-ai/dsh-agent';
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths';
 import {
   appendConsolidationLog,
@@ -31,8 +21,8 @@ import {
 } from './consolidate.ts';
 import { DEFAULT_MAX_BYTES, createMemoryStore } from './store.ts';
 import { registerMemoryTools } from './tools.ts';
+import { registerUserMemoryTools } from './user-tools.ts';
 import { registerProfilePrompt } from './prompt.ts';
-import { createWorkspaceMemory } from './workspace.ts';
 import { installManagerWeb } from './manager-web.ts';
 import { createMemoryManager } from './manager.ts';
 import { defineTool } from '@deepseek-ai/dsh-tools';
@@ -52,6 +42,9 @@ export const DEFAULT_WORKSPACE_PROMPT_MAX_BYTES = 512;
 export const DEFAULT_CONSOLIDATE_MIN_INTERVAL_MS = 600_000;
 
 export const Config = z.object({
+  memoryMode: z.union(['project', 'shared', 'paused']).default('project').description('project: current project notes only; shared: also allow cross-project preferences; paused: block model access'),
+  recordRequests: z.boolean().default(false).description('Opt-in diagnostic receipts; off by default. Can be changed in the manager.'),
+  legacyTools: z.boolean().default(false).description('Compatibility only: expose the old direct-write, migration and manual consolidation tools; not recommended for normal use'),
   path: z.string().default('').description('Profile file path; defaults to $DSH_HOME/user-memory/user.md'),
   maxBytes: z
     .number()
@@ -66,7 +59,7 @@ export const Config = z.object({
   includeInPrompt: z
     .boolean()
     .default(true)
-    .description("Inject the user profile into every session's system prompt"),
+    .description('Enable confirmed user preferences in future conversations. Can be toggled in the manager.'),
   staleAfterDays: z
     .number()
     .min(0)
@@ -86,16 +79,16 @@ export const Config = z.object({
     .default('')
     .description('Override the workspace memory base directory (defaults to $DSH_HOME/user-memory/workspace); mainly for testing'),
   workspaceMode: z.union(['directory', 'git-root']).default('directory').description('Project identity: directory (compatible default) or nearest Git root'),
-  projectPath: z.string().default('').description('Explicit existing project directory; overrides session cwd and workspaceMode'),
+  projectPath: z.string().default('').description('Compatibility/CLI only: ignored by normal model tools; session cwd determines the project'),
   autoConsolidate: z
     .boolean()
     .default(false)
-    .description('Run a background consolidation pass at agent turn boundaries (debounced by consolidateMinIntervalMs)'),
+    .description('Retired setting: ignored. Automatic consolidation no longer runs.'),
   consolidateMinIntervalMs: z
     .number()
     .min(0)
     .default(DEFAULT_CONSOLIDATE_MIN_INTERVAL_MS)
-    .description('Minimum interval between automatic consolidation runs; 0 = every turn boundary'),
+    .description('Retired setting: ignored; automatic consolidation no longer runs'),
   autoInvalidateAfterDays: z
     .number()
     .min(0)
@@ -124,6 +117,9 @@ export const Config = z.object({
 
 /** Validated config shape (schemastery has no z.infer; kept structural). */
 export interface UserMemoryConfig {
+  memoryMode?: 'project' | 'shared' | 'paused';
+  recordRequests?: boolean;
+  legacyTools?: boolean;
   path: string;
   maxBytes: number;
   promptMaxBytes: number;
@@ -144,6 +140,13 @@ export interface UserMemoryConfig {
 
 export function apply(ctx: Context, config: UserMemoryConfig): void {
   const store = createMemoryStore({ path: config.path, maxBytes: config.maxBytes });
+  const userOnly = config.legacyTools !== true;
+  const policy = createMemoryPolicy(store.path(), userOnly
+    ? { mode: config.includeInPrompt === false ? 'paused' : 'shared', inject: config.includeInPrompt !== false, diagnostics: false }
+    : { mode: config.memoryMode ?? 'shared', inject: config.includeInPrompt === true, diagnostics: config.recordRequests === true }, userOnly);
+  const activity = createMemoryActivity(store.path(), () => { const p = policy.read(); return p.diagnostics && p.mode !== 'paused'; });
+  if (userOnly) ctx.on('session/event', (session, event) => activity.observe(session, event));
+  else installMemoryActivity(ctx, activity);
   const staleAfterDays = config.staleAfterDays ?? 0;
   const workspaceBase = config.workspaceBase ?? '';
   const autoInvalidateAfterDays = config.autoInvalidateAfterDays ?? 0;
@@ -164,13 +167,16 @@ export function apply(ctx: Context, config: UserMemoryConfig): void {
   registerProfilePrompt(
     ctx,
     store,
-    config.includeInPrompt !== false,
+    config.includeInPrompt === true,
     config.promptMaxBytes ?? DEFAULT_PROMPT_MAX_BYTES,
     staleAfterDays,
     config.workspacePromptMaxBytes ?? DEFAULT_WORKSPACE_PROMPT_MAX_BYTES,
     workspaceBase,
     config.workspaceMode,
-    config.projectPath,
+    config.legacyTools ? config.projectPath : '',
+    activity,
+    policy,
+    userOnly,
   );
 
   /**
@@ -233,53 +239,22 @@ export function apply(ctx: Context, config: UserMemoryConfig): void {
     return { plan, record, mode: request.mode, ...(modelError === undefined ? {} : { modelError }) };
   }
 
-  registerMemoryTools(ctx, store, { staleAfterDays, workspaceBase, consolidate, maxBytes: config.maxBytes,
-    workspaceMode: config.workspaceMode, projectPath: config.projectPath });
+  if (userOnly) registerUserMemoryTools(ctx, store, policy);
+  else registerMemoryTools(ctx, store, { staleAfterDays, workspaceBase, consolidate, maxBytes: config.maxBytes,
+    workspaceMode: config.workspaceMode, projectPath: config.projectPath, activity, policy, legacyTools: true });
   const managerOptions = { profilePath: store.path(), workspaceBase, maxBytes: config.maxBytes,
-    workspaceMode: config.workspaceMode, projectPath: config.projectPath, promptMaxBytes: config.promptMaxBytes,
-    workspacePromptMaxBytes: config.workspacePromptMaxBytes, includeInPrompt: config.includeInPrompt, staleAfterDays };
+    workspaceMode: config.workspaceMode, projectPath: config.legacyTools ? config.projectPath : '', promptMaxBytes: config.promptMaxBytes,
+    workspacePromptMaxBytes: config.workspacePromptMaxBytes, includeInPrompt: config.includeInPrompt, staleAfterDays, activity, usagePolicy: policy, userOnly };
   installManagerWeb(ctx, managerOptions);
   const manager = createMemoryManager(managerOptions);
   ctx.tools.register(defineTool({ name: 'memory_status',
-    description: 'Diagnose memory storage and project identity using the running plugin configuration. Returns counts and paths, never memory contents. The local web manager is available at /_dsh/user-memory on the DSH web server. No model calls are made.',
+    description: 'Check whether user memory is enabled and how many saved preferences exist. No memory content is returned.',
     parameters: {}, output: { schema: { type: 'object', additionalProperties: true }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }] },
     async execute(_args: {}, exec: { agent?: { session?: { header?: { cwd?: string } } } }) {
-      try { return JSON.parse(JSON.stringify({ ok: true, ...await manager.diagnose(exec.agent?.session?.header?.cwd), managerPath: '/_dsh/user-memory' })); }
+      if (userOnly) return { ok: true, enabled: policy.read().mode === 'shared' && policy.read().inject, entries: (await store.list()).filter(e => !e.invalidatedAt).length };
+      try { return JSON.parse(JSON.stringify({ ok: true, ...await manager.diagnose(exec.agent?.session?.header?.cwd, !config.legacyTools), managerPath: '/_dsh/user-memory' })); }
       catch (error) { return { ok: false, error: (error as Error).message }; }
     },
   }));
 
-  if (config.autoConsolidate === true) {
-    const minInterval = config.consolidateMinIntervalMs ?? DEFAULT_CONSOLIDATE_MIN_INTERVAL_MS;
-    let lastRunAt = 0;
-    let running = false;
-    const runInBackground = async (agent: Agent | undefined): Promise<void> => {
-      if (running) return;
-      if (minInterval > 0 && Date.now() - lastRunAt < minInterval) return;
-      running = true;
-      lastRunAt = Date.now();
-      try {
-        const cwd = config.projectPath || agent?.session?.header?.cwd;
-        const ws =
-          typeof cwd === 'string' && cwd !== ''
-            ? await createWorkspaceMemory({ cwd, baseDir: workspaceBase, mode: config.workspaceMode, projectPath: config.projectPath })
-            : null;
-        await consolidate({
-          source: 'turn',
-          mode: 'apply',
-          useModel: modelConfigured,
-          workspace: ws,
-          ...(ws === null ? {} : { workspacePath: ws.path }),
-        });
-      } catch {
-        // Background work must never surface into the session.
-      } finally {
-        running = false;
-      }
-    };
-    ctx.on('agent/turn-stopping', (payload) => {
-      // Fire-and-forget: consolidation must not delay the turn boundary.
-      void runInBackground(payload?.agent);
-    });
-  }
 }

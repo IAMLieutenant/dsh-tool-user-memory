@@ -13,6 +13,7 @@ export interface MemoryCandidate {
   workspacePath?: string;
   sourceSessionId?: string;
   sourceEventSeq?: number;
+  sourceRole?: 'user' | 'assistant';
   excerptVerified?: boolean;
   excerpt: string;
   reason: string;
@@ -79,5 +80,6 @@ function validate(c: CandidateInput): void {
   }
   if (!c.value.trim()) throw new Error('候选内容不能为空');
   if (c.excerptVerified !== undefined && typeof c.excerptVerified !== 'boolean') throw new Error('来源核验状态无效');
+  if (c.sourceRole !== undefined && !['user', 'assistant'].includes(c.sourceRole)) throw new Error('来源角色无效');
   if (c.sourceEventSeq !== undefined && (!Number.isSafeInteger(c.sourceEventSeq) || c.sourceEventSeq < 0)) throw new Error('来源消息位置无效');
 }

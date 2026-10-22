@@ -1,6 +1,6 @@
 # 使用与配置参考
 
-返回 [首页](../README.md)。本页对应 `0.4.1`，候选流程见 [候选确认说明](candidate-review.md)。
+返回 [首页](../README.md)。**这是已发布 `0.4.1` 的历史参考。** 当前本地版本只保存用户记忆，页面和默认运行方式以 [最终设计](final-design.md) 为准。下文项目工具、置顶、自动整理与旧配置属于历史能力，不作为当前日常流程。候选旧版流程见 [候选确认说明](candidate-review.md)。
 
 下列独立命令使用本仓库构建后的 `node lib/migrate-cli.js`，请先在仓库根目录执行 `pnpm install --frozen-lockfile` 和 `pnpm run build`。旧版 `0.4.0` 的 CLI 不理解新增来源元数据，处理 `0.4.1` 数据时请使用对应版本的命令。
 

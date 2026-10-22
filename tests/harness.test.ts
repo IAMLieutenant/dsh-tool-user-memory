@@ -51,6 +51,9 @@ async function mountProfile(
     maxBytes: 8192,
     promptMaxBytes,
     includeInPrompt,
+    memoryMode: 'shared',
+    legacyTools: true,
+    recordRequests: true,
     staleAfterDays,
     workspaceBase,
     workspacePromptMaxBytes,
@@ -129,7 +132,7 @@ test('harness: proposal captures host session identity and verifies only direct 
     const execute = (n: number, excerpt: string) => ctx.tools.execute({ callId: callId(n), name: 'memory_propose', arguments: { key: 'language-'+n, value: '中文，先给结论', scope: 'workspace', excerpt }, signal: new AbortController().signal, agent });
     assert.equal((await execute(120, '默认用中文回答')).value?.ok, true);
     assert.equal((await execute(121, '伪造的用户喜好')).value?.ok, true);
-    const manager = createMemoryManager({ profilePath: file });
+    const manager = createMemoryManager({ profilePath: file, userOnly: false });
     const items = (await manager.snapshot()).candidates;
     const verified = items.find(c => c.key === 'language-120')!;
     assert.equal(verified.sourceSessionId, 'actual-host-session'); assert.equal(verified.sourceEventSeq, 1); assert.equal(verified.excerptVerified, true);
@@ -381,7 +384,7 @@ test('harness: scope=workspace without an agent fails with a clear error', async
     const result = await runTool(ctx, 21, 'memory_update', { key: 'build', value: 'x', scope: 'workspace' });
     const value = result.value as { ok?: boolean; error?: string };
     assert.equal(value.ok, false);
-    assert.ok(value.error?.includes('no workspace'));
+    assert.ok(value.error?.includes('没有可用的项目目录'));
   } finally {
     await disposeCtx(ctx);
     rmSync(dir, { recursive: true, force: true });
